@@ -1,0 +1,5 @@
+TTYAPP = ucs2any
+
+CSRCS = ucs2any.c
+
+DEFINES += NEED_BASENAME

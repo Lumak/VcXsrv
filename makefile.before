@@ -1,0 +1,104 @@
+ifndef DEBUG
+DEBUG=0
+endif
+ifndef MAKESERVER
+MAKESERVER=0
+endif
+
+default: all
+.PHONY : default
+
+#define some gnu make functions used in conditional compilation
+EQ =$(if $(subst $(1)_,,$(2)_),0,1)
+NE =$(if $(subst $(1)_,,$(2)_),1,0)
+OR =$(subst 10,1,$(findstring 1,$(1))0)
+AND=$(subst 01,0,$(findstring 0,$(1))1)
+NOT=$(if $(findstring 0,$(1)),1,0)
+
+CC        ?= cl /nologo
+CPP       ?= $(CC)
+CCFLAGS   += -c -GF -Gy -FS #-Wall
+
+#CCFLAGS   += -wd4996 -wd4738
+LINK      ?= link /nologo
+LINKFLAGS += /INCREMENTAL:NO
+ifdef IS64
+LINKFLAGS += /MACHINE:X64
+OBJDIREXTRA=64
+SSLSUFFIX=64
+else
+LINKFLAGS += /MACHINE:X86
+SSLSUFFIX=32
+endif
+AR        ?= lib /nologo
+RC        ?= rc
+RCFLAGS   ?= /l 0x409
+
+SKIPHEADERS=string map stdlib.h stddef.h string.h stdio.h windows.h stdarg.h
+
+ifeq ($(MAKESERVER),1)
+OBJDIRPREFIX=serv
+DEFINES += XKB_IN_SERVER XFree86Server HAVE_DIX_CONFIG_H 
+else
+DEFINES += XKB
+endif
+
+ifeq ($(NORELDBG),1)
+# This all is here to avoid unnecessary rebuilds when switching between release and debug and MAKESERVER
+OBJDIR?=obj$(OBJDIREXTRA)
+DEBUG=0
+MAKESERVER=0
+endif
+
+ifeq ($(DEBUG),1)
+CCFLAGS   += -MDd -RTCc -RTC1 -Od -GS -GR -Zi
+LINKFLAGS += /DEBUG
+OBJDIR ?= obj$(OBJDIREXTRA)\$(OBJDIRPREFIX)debug
+NOSERVOBJDIR ?= obj$(OBJDIREXTRA)\debug
+SERVOBJDIR ?= obj$(OBJDIREXTRA)\servdebug
+DEFINES += _DEBUG DEBUG
+RCFLAGS += -d "_DEBUG"
+else
+CCFLAGS   += -MD -O2 -Ob2 -Oi -Ox -Oy -Ot -Zi -GL
+DEFINES   +=  NDEBUG
+LINKFLAGS += /OPT:REF /OPT:ICF /DEBUG /LTCG:STATUS
+OBJDIR ?= obj$(OBJDIREXTRA)\$(OBJDIRPREFIX)release
+NOSERVOBJDIR ?= obj$(OBJDIREXTRA)\release
+SERVOBJDIR ?= obj$(OBJDIREXTRA)\servrelease
+RCFLAGS += -d "NDEBUG"
+AR += /LTCG
+endif
+
+
+
+DEFINES += WIN32 _WIN32 _WINDOWS WINDOWS _MBCS __i386__ __MINGW32__ _POSIX_ X_NOT_POSIX _TIMEVAL_DEFINED mode_t=int __STDC__
+DEFINES += FAKEIT HAVE_CONFIG_H _BSD_SOURCE _WIN32_WINNT=_WIN32_WINNT_WINXP
+
+TOPSRCDIR=$(MHMAKECONF)\xorg-server
+
+INCLUDES += . $(MHMAKECONF)\openssl\inc32 $(MHMAKECONF) $(MHMAKECONF)\pixman-1 $(MHMAKECONF)\pthreads
+INCLUDES += $(TOPSRCDIR)\include $(TOPSRCDIR)\mi $(TOPSRCDIR)\mfb $(TOPSRCDIR)\hw\xfree86\common $(TOPSRCDIR)\render $(TOPSRCDIR)\miext\damage
+INCLUDES += $(TOPSRCDIR)\damageext $(TOPSRCDIR)\randr $(TOPSRCDIR)\xfixes $(TOPSRCDIR)\Xi $(TOPSRCDIR)\fb $(TOPSRCDIR)\miext\cw
+INCLUDES += $(TOPSRCDIR)\miext\shadow $(TOPSRCDIR)\miext\sync $(MHMAKECONF)\zlib
+INCLUDES += $(MHMAKECONF)\include $(TOPSRCDIR)\Xext $(MHMAKECONF)\pixman\pixman $(TOPSRCDIR)\present
+
+SYSTEMLIBS ?= odbc32.lib odbccp32.lib kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib shlwapi.lib \
+              oleaut32.lib uuid.lib odbc32.lib odbccp32.lib setupapi.lib winmm.lib ws2_32.lib wmcodecdspuuid.lib comctl32.lib opengl32.lib
+
+CPPFLAGS ?= $(CCFLAGS) -EHa
+
+BDFTOPCF=$(MHMAKECONF)\bdftopcf\$(OBJDIR)\bdftopcf.exe
+MKFONTSCALE=$(MHMAKECONF)\mkfontscale\$(OBJDIR)\mkfontscale.exe
+
+all: $(OBJDIR)
+
+ifeq ($(DEBUG),1)
+PTHREADLIB:=$(MHMAKECONF)\pthreads\pthreadVC2d$(OBJDIREXTRA).lib
+FREETYPELIB:=$(MHMAKECONF)\freetype\lib$(OBJDIREXTRA)\freetype263MT_D.lib
+OPENSSLLIB:=$(MHMAKECONF)\openssl\out$(SSLSUFFIX)_d\libeay32.lib
+else
+PTHREADLIB:=$(MHMAKECONF)\pthreads\pthreadVC2$(OBJDIREXTRA).lib
+FREETYPELIB:=$(MHMAKECONF)\freetype\lib$(OBJDIREXTRA)\freetype263MT.lib
+OPENSSLLIB:=$(MHMAKECONF)\openssl\out$(SSLSUFFIX)\libeay32.lib
+endif
+LIBXMLLIB:=$(MHMAKECONF)\libxml2\lib$(OBJDIREXTRA)\libxml2-2.lib

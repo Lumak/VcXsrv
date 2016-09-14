@@ -1,0 +1,15 @@
+fixes
+hashtabletest
+input
+list
+misc
+os
+sdksyms.c
+string
+touch
+xfree86
+xkb
+xtest
+signal-logging
+*.log
+*.trs

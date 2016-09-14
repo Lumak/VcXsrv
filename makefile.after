@@ -1,0 +1,138 @@
+OBJS+=$(CSRCS:%.c=$(OBJDIR)$/%$(OBJEXT))
+OBJS:=$(OBJS:%.cc=$(OBJDIR)$/%$(OBJEXT))
+
+RESOBJS:=$(RESOURCES:%.rc=$(OBJDIR)$/%.res)
+
+ifdef SUBDIRS
+load_makefile $(SUBDIRS:%=%\makefile MAKESERVER=$(MAKESERVER) DEBUG=$(DEBUG);)
+all: $(SUBDIRS:%=%\all)
+endif
+
+
+### Static library stuff ###
+ifdef LIBRARY
+LIBRARY_DIR := $(LIBRARY:%=$(OBJDIR)\%.lib)
+PDB := $(LIBRARY_DIR:%.lib=%.pdb)
+
+all: $(LIBRARY_DIR)
+
+$(LIBRARY_DIR) : $(OBJS)
+	$(AR) /OUT:$(relpath $@) $(OBJS)
+
+endif # End static library stuff
+
+ifdef SHAREDLIB
+DEFFILE ?= $(SHAREDLIB:%=%.def)
+LIBRARYS := $(SHAREDLIB:%=$(OBJDIR)\%.dll) $(SHAREDLIB:%=$(OBJDIR)\%.lib)
+PDB := $(SHAREDLIB:%=$(OBJDIR)\%.pdb)
+LINKFLAGS += /DLL /DEF:$(DEFFILE)
+
+all: $(LIBRARYS)
+
+$(LIBRARYS) : $(OBJS) $(INCLUDELIBFILES) $(RESOBJS) $(DEFFILE)
+	$(LINK) $(LINKFLAGS) /OUT:$(relpath $(basename $@)).dll $(INCLUDELIBFILES) $(SYSTEMLIBS) $(LINKLIBS) $(OBJS)
+
+endif
+
+### WINAPP/TTYAPP stuff ###
+ifeq (1,$(call OR, $(call NE,$(WINAPP)_,_) $(call NE,$(TTYAPP)_,_)))
+
+ifdef WINAPP
+
+load_makefile $(MHMAKECONF)\libwinmain\makefile MAKESERVER=0 DEBUG=$(DEBUG)
+EXTRALIB := $(MHMAKECONF)\libwinmain\$(NOSERVOBJDIR)\libwinmain.lib
+
+EXE := $(WINAPP:%=$(OBJDIR)\%.exe)
+LINKFLAGS += /SUBSYSTEM:WINDOWS
+else
+EXE := $(TTYAPP:%=$(OBJDIR)\%.exe)
+LINKFLAGS += /SUBSYSTEM:CONSOLE
+endif
+
+PDB := $(EXE:%.exe=%.pdb)
+
+ifdef VS2008
+
+MANIFESTFILE:=$(OBJDIR)\runtime.manifest
+
+$(MANIFESTFILE):
+	$(MHMAKECONF)/tools/genruntimemanifest $@ $(DEBUG)
+
+endif
+
+all: $(EXE)
+
+$(EXE) :  $(OBJS) $(INCLUDELIBFILES) $(INCLUDENOSERVLIBFILES) $(RESOBJS) $(MANIFESTFILE) $(EXTRALIB)
+ifndef VS2008
+	$(LINK) $(LINKFLAGS) /MAP:$(EXE:%.exe=%.map) /OUT:$(relpath $@) $(INCLUDELIBFILES) $(INCLUDENOSERVLIBFILES) $(SYSTEMLIBS) $(LINKLIBS) $(EXTRALIB) $(OBJS) $(RESOBJS)
+else
+	$(LINK) $(LINKFLAGS) /MANIFEST:NO /OUT:$(relpath $@) $(INCLUDELIBFILES) $(INCLUDENOSERVLIBFILES) $(SYSTEMLIBS) $(LINKLIBS) $(EXTRALIB) $(OBJS) $(RESOBJS)
+	mt -nologo -manifest $(MANIFESTFILE) -outputresource:$(relpath $@);\#1
+endif
+
+endif  # End WINAPP or TTYAPP stuff
+
+ifeq ($(DEBUG),1)
+COMMONCFLAGS += $(DEFINES:%=-D%) $(INCLUDES:%=-I%) -Fo$(relpath $@) -Fd"$(PDB)" $<
+else
+COMMONCFLAGS += $(DEFINES:%=-D%) $(INCLUDES:%=-I%) -Fo$(relpath $@) -Fd"$(PDB)" $<
+#PDB=   # There is no PDB file generated in a release build
+endif
+
+ifndef CLEANRULEPOSTFIX
+ifeq ($(OBJDIRPREFIX),)
+ifeq ($(DEBUG),1)
+CLEANRULEPOSTFIX=debug
+else
+CLEANRULEPOSTFIX=release
+endif
+else
+CLEANRULEPOSTFIX=$(OBJDIRPREFIX)
+endif
+endif
+
+.PHONY: all cleanall clean clean$(CLEANRULEPOSTFIX)
+
+### Implicit rules ###
+CREATEDIR=mkdir $@
+
+$(OBJDIR) :
+	$(CREATEDIR)
+
+clean: clean$(CLEANRULEPOSTFIX)
+
+clean$(CLEANRULEPOSTFIX):
+	del -e $(OBJDIR)
+
+$(OBJDIR)\%$(OBJEXT) : %.c
+	$(CC) $(CCFLAGS) $(COMMONCFLAGS)
+
+$(OBJDIR)\%$(OBJEXT) : $(OBJDIR)\%.c
+	$(CC) $(CCFLAGS) $(COMMONCFLAGS)
+
+$(OBJDIR)\%$(OBJEXT) : %.cc
+	$(CC) $(CCFLAGS) /EHsc $(COMMONCFLAGS)
+
+$(OBJDIR)\%.res : %.rc
+	$(RC) $(RCFLAGS) $(RCDEFINES:%=-d "%") $(RCINCLUDES:%=-i %) -Fo$(relpath $@) $<
+
+ifdef INC_BDF_RULES
+load_makefile $(MHMAKECONF)\bdftopcf\makefile MAKESERVER=0 DEBUG=$(DEBUG)
+load_makefile $(MHMAKECONF)\mkfontscale\makefile MAKESERVER=0 DEBUG=$(DEBUG)
+
+#bdftopcf is dependent on zlib1.dll, so we need to add the directory of the zlib dll to the path env variable
+PATH:=$(relpath $(MHMAKECONF)\zlib\$(NOSERVOBJDIR))\;$(PATH)
+export PATH
+
+$(DESTDIR)\%.pcf.gz: %.bdf
+	@del -e $@
+	$(BDFTOPCF) -t $< | gzip > $@
+
+$(DESTDIR)\%.enc.gz: %.enc
+	gzip -c < $< > $@
+endif
+
+ifdef DESTDIR
+$(DESTDIR):
+	$(CREATEDIR)
+endif
