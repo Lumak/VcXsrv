@@ -25,12 +25,11 @@
  *
  */
 
-#pragma once
-
 #ifndef _NIR_SPIRV_H_
 #define _NIR_SPIRV_H_
 
-#include "nir/nir.h"
+#include "compiler/nir/nir.h"
+#include "compiler/shader_info.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -38,14 +37,49 @@ extern "C" {
 
 struct nir_spirv_specialization {
    uint32_t id;
-   uint32_t data;
+   union {
+      uint32_t data32;
+      uint64_t data64;
+   };
+   bool defined_on_module;
 };
+
+enum nir_spirv_debug_level {
+   NIR_SPIRV_DEBUG_LEVEL_INFO,
+   NIR_SPIRV_DEBUG_LEVEL_WARNING,
+   NIR_SPIRV_DEBUG_LEVEL_ERROR,
+};
+
+struct spirv_to_nir_options {
+   /* Whether or not to lower all workgroup variable access to offsets
+    * up-front.  This means you will _shared intrinsics instead of _var
+    * for workgroup data access.
+    *
+    * This is currently required for full variable pointers support.
+    */
+   bool lower_workgroup_access_to_offsets;
+
+   struct spirv_supported_capabilities caps;
+
+   struct {
+      void (*func)(void *private_data,
+                   enum nir_spirv_debug_level level,
+                   size_t spirv_offset,
+                   const char *message);
+      void *private_data;
+   } debug;
+};
+
+bool gl_spirv_validation(const uint32_t *words, size_t word_count,
+                         struct nir_spirv_specialization *spec, unsigned num_spec,
+                         gl_shader_stage stage, const char *entry_point_name);
 
 nir_function *spirv_to_nir(const uint32_t *words, size_t word_count,
                            struct nir_spirv_specialization *specializations,
                            unsigned num_specializations,
                            gl_shader_stage stage, const char *entry_point_name,
-                           const nir_shader_compiler_options *options);
+                           const struct spirv_to_nir_options *options,
+                           const nir_shader_compiler_options *nir_options);
 
 #ifdef __cplusplus
 }

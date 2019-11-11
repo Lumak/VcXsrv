@@ -124,12 +124,6 @@ Equipment Corporation.
 
 extern void Dispatch(void);
 
-#ifdef XQUARTZ
-BOOL serverRunning;
-pthread_mutex_t serverRunningMutex = PTHREAD_MUTEX_INITIALIZER;
-pthread_cond_t serverRunningCond = PTHREAD_COND_INITIALIZER;
-#endif
-
 CallbackListPtr RootWindowFinalizeCallback = NULL;
 
 int
@@ -149,7 +143,7 @@ dix_main(int argc, char *argv[], char *envp[])
     //_CrtSetDbgFlag(TmpFlag);
     #endif
 
-    ptw32_processInitialize();
+    __ptw32_processInitialize();
     display = "0";
 
     #ifdef WIN32
@@ -178,7 +172,6 @@ dix_main(int argc, char *argv[], char *envp[])
          chdir(ModuleFilename);
        }
      }
-    OsVendorPreInit(argc, argv);
     #endif
 
     InitRegions();
@@ -187,9 +180,11 @@ dix_main(int argc, char *argv[], char *envp[])
 
     CheckUserAuthorization();
 
-    InitConnectionLimits();
-
     ProcessCommandLine(argc, argv);
+
+    #ifdef WIN32
+    OsVendorPreInit(argc, argv);
+    #endif
 
     alwaysCheckForInput[0] = 0;
     alwaysCheckForInput[1] = 1;
@@ -199,11 +194,7 @@ dix_main(int argc, char *argv[], char *envp[])
         ScreenSaverInterval = defaultScreenSaverInterval;
         ScreenSaverBlanking = defaultScreenSaverBlanking;
         ScreenSaverAllowExposures = defaultScreenSaverAllowExposures;
-#ifdef DPMSExtension
-        DPMSStandbyTime = DPMSSuspendTime = DPMSOffTime = ScreenSaverTime;
-        DPMSEnabled = TRUE;
-        DPMSPowerLevel = 0;
-#endif
+
         InitBlockAndWakeupHandlers();
         /* Perform any operating system dependent initializations you'd like */
         OsInit();
@@ -290,13 +281,6 @@ dix_main(int argc, char *argv[], char *envp[])
                        defaultCursorFont);
         }
 
-#ifdef DPMSExtension
-        /* check all screens, looking for DPMS Capabilities */
-        DPMSCapableFlag = DPMSSupported();
-        if (!DPMSCapableFlag)
-            DPMSEnabled = FALSE;
-#endif
-
 #ifdef PANORAMIX
         /*
          * Consolidate window and colourmap information for each screen
@@ -331,14 +315,6 @@ dix_main(int argc, char *argv[], char *envp[])
             }
         }
 
-#ifdef XQUARTZ
-        /* Let the other threads know the server is done with its init */
-        pthread_mutex_lock(&serverRunningMutex);
-        serverRunning = TRUE;
-        pthread_cond_broadcast(&serverRunningCond);
-        pthread_mutex_unlock(&serverRunningMutex);
-#endif
-
         NotifyParentProcess();
 
         #ifdef _MSC_VER
@@ -349,13 +325,6 @@ dix_main(int argc, char *argv[], char *envp[])
         InputThreadInit();
 
         Dispatch();
-
-#ifdef XQUARTZ
-        /* Let the other threads know the server is no longer running */
-        pthread_mutex_lock(&serverRunningMutex);
-        serverRunning = FALSE;
-        pthread_mutex_unlock(&serverRunningMutex);
-#endif
 
         UndisplayDevices();
         DisableAllDevices();

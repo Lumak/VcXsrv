@@ -42,18 +42,17 @@
 static Bool
 winRandRGetInfo(ScreenPtr pScreen, Rotation * pRotations)
 {
-    rrScrPrivPtr pRRScrPriv;
-    RROutputPtr output;
-
-    pRRScrPriv = rrGetScrPriv(pScreen);
-    output = pRRScrPriv->outputs[0];
-
     winDebug("winRandRGetInfo ()\n");
 
     /* Don't support rotations */
     *pRotations = RR_Rotate_0;
 
-    /* Delete previous mode */
+    return TRUE;
+}
+
+static void
+winRandRUpdateMode(ScreenPtr pScreen, RROutputPtr output)
+{    /* Delete previous mode */
     if (output->modes[0])
         {
             RRModeDestroy(output->modes[0]);
@@ -83,8 +82,6 @@ winRandRGetInfo(ScreenPtr pScreen, Rotation * pRotations)
         mode = RRModeGet(&modeInfo, name);
         output->crtc->mode = mode;
     }
-
-    return TRUE;
 }
 
 /*
@@ -95,6 +92,7 @@ winDoRandRScreenSetSize(ScreenPtr pScreen,
                         CARD16 width,
                         CARD16 height, CARD32 mmWidth, CARD32 mmHeight)
 {
+    rrScrPrivPtr pRRScrPriv;
     winScreenPriv(pScreen);
     winScreenInfo *pScreenInfo = pScreenPriv->pScreenInfo;
     WindowPtr pRoot = pScreen->root;
@@ -136,6 +134,10 @@ winDoRandRScreenSetSize(ScreenPtr pScreen,
     // and arrange for it to be repainted
     pScreen->PaintWindow(pRoot, &pRoot->borderClip, PW_BACKGROUND);
 
+    // Set mode to current display size
+    pRRScrPriv = rrGetScrPriv(pScreen);
+    winRandRUpdateMode(pScreen, pRRScrPriv->primaryOutput);
+
     /* Indicate that a screen size change took place */
     RRScreenSizeNotify(pScreen);
 }
@@ -174,9 +176,7 @@ winRandRScreenSetSize(ScreenPtr pScreen,
         || pScreenInfo->fMWExtWM
 #endif
         || pScreenInfo->fRootless
-#ifdef XWIN_MULTIWINDOW
         || pScreenInfo->fMultiWindow
-#endif
         ) {
         ErrorF
             ("winRandRScreenSetSize - resize not supported in rootless modes\n");
@@ -275,6 +275,23 @@ winRandRInit(ScreenPtr pScreen)
         /* Ensure we have space for exactly one mode */
         output->modes = malloc(sizeof(RRModePtr));
         output->modes[0] = NULL;
+
+        winRandRUpdateMode(pScreen, output);
+
+        /* Make up some physical dimensions */
+        output->mmWidth = pScreen->mmWidth;
+        output->mmHeight = pScreen->mmHeight;
+
+        /* Allocate and make up a (fixed, linear) gamma ramp */
+        {
+            int i;
+            RRCrtcGammaSetSize(crtc, 256);
+            for (i = 0; i < crtc->gammaSize; i++) {
+                crtc->gammaRed[i] = i << 8;
+                crtc->gammaBlue[i] = i << 8;
+                crtc->gammaGreen[i] = i << 8;
+            }
+        }
     }
 
     /*
@@ -282,7 +299,7 @@ winRandRInit(ScreenPtr pScreen)
        monitor size (we can have scrollbars :-), so set the
        upper limit to the maximum coordinates X11 can use.
      */
-    RRScreenSetSizeRange(pScreen, 0, 0, 32768, 32768);
+    RRScreenSetSizeRange(pScreen, 0, 0, 32767, 32767);
 
     return TRUE;
 }

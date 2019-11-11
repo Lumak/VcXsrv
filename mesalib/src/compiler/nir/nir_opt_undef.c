@@ -86,17 +86,15 @@ opt_undef_vecN(nir_builder *b, nir_alu_instr *alu)
 
    assert(alu->dest.dest.is_ssa);
 
-   unsigned num_components = nir_op_infos[alu->op].num_inputs;
-
-   for (unsigned i = 0; i < num_components; i++) {
+   for (unsigned i = 0; i < nir_op_infos[alu->op].num_inputs; i++) {
       if (!alu->src[i].src.is_ssa ||
           alu->src[i].src.ssa->parent_instr->type != nir_instr_type_ssa_undef)
          return false;
    }
 
    b->cursor = nir_before_instr(&alu->instr);
-   nir_ssa_def *undef =
-      nir_ssa_undef(b, num_components, nir_dest_bit_size(alu->dest.dest));
+   nir_ssa_def *undef = nir_ssa_undef(b, alu->dest.dest.ssa.num_components,
+                                      nir_dest_bit_size(alu->dest.dest));
    nir_ssa_def_rewrite_uses(&alu->dest.dest.ssa, nir_src_for_ssa(undef));
 
    return true;
@@ -109,19 +107,23 @@ opt_undef_vecN(nir_builder *b, nir_alu_instr *alu)
 static bool
 opt_undef_store(nir_intrinsic_instr *intrin)
 {
+   int arg_index;
    switch (intrin->intrinsic) {
-   case nir_intrinsic_store_var:
+   case nir_intrinsic_store_deref:
+      arg_index = 1;
+      break;
    case nir_intrinsic_store_output:
    case nir_intrinsic_store_per_vertex_output:
    case nir_intrinsic_store_ssbo:
    case nir_intrinsic_store_shared:
+      arg_index =  0;
       break;
    default:
       return false;
    }
 
-   if (!intrin->src[0].is_ssa ||
-       intrin->src[0].ssa->parent_instr->type != nir_instr_type_ssa_undef)
+   if (!intrin->src[arg_index].is_ssa ||
+       intrin->src[arg_index].ssa->parent_instr->type != nir_instr_type_ssa_undef)
       return false;
 
    nir_instr_remove(&intrin->instr);

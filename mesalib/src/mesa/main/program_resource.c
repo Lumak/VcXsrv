@@ -31,6 +31,7 @@
 #include "main/context.h"
 #include "program_resource.h"
 #include "compiler/glsl/ir_uniform.h"
+
 static bool
 supported_interface_enum(struct gl_context *ctx, GLenum iface)
 {
@@ -67,9 +68,7 @@ supported_interface_enum(struct gl_context *ctx, GLenum iface)
 }
 
 static struct gl_shader_program *
-lookup_linked_program(GLuint program,
-                      const char *caller,
-                      bool raise_link_error)
+lookup_linked_program(GLuint program, const char *caller)
 {
    GET_CURRENT_CONTEXT(ctx);
    struct gl_shader_program *prog =
@@ -78,65 +77,12 @@ lookup_linked_program(GLuint program,
    if (!prog)
       return NULL;
 
-   if (prog->LinkStatus == GL_FALSE) {
-      if (raise_link_error)
-         _mesa_error(ctx, GL_INVALID_OPERATION, "%s(program not linked)",
-                     caller);
+   if (prog->data->LinkStatus == LINKING_FAILURE) {
+      _mesa_error(ctx, GL_INVALID_OPERATION, "%s(program not linked)",
+                  caller);
       return NULL;
    }
    return prog;
-}
-
-static GLenum
-stage_from_program_interface(GLenum programInterface)
-{
-   switch(programInterface) {
-   case GL_VERTEX_SUBROUTINE_UNIFORM:
-      return MESA_SHADER_VERTEX;
-   case GL_TESS_CONTROL_SUBROUTINE_UNIFORM:
-      return MESA_SHADER_TESS_CTRL;
-   case GL_TESS_EVALUATION_SUBROUTINE_UNIFORM:
-      return MESA_SHADER_TESS_EVAL;
-   case GL_GEOMETRY_SUBROUTINE_UNIFORM:
-      return MESA_SHADER_GEOMETRY;
-   case GL_FRAGMENT_SUBROUTINE_UNIFORM:
-      return MESA_SHADER_FRAGMENT;
-   case GL_COMPUTE_SUBROUTINE_UNIFORM:
-      return MESA_SHADER_COMPUTE;
-   default:
-      unreachable("unexpected programInterface value");
-   }
-}
-
-static struct gl_linked_shader *
-lookup_linked_shader(GLuint program,
-                     GLenum programInterface,
-                     const char *caller)
-{
-   struct gl_shader_program *shLinkedProg =
-      lookup_linked_program(program, caller, false);
-   gl_shader_stage stage = stage_from_program_interface(programInterface);
-
-   if (!shLinkedProg)
-      return NULL;
-
-   return shLinkedProg->_LinkedShaders[stage];
-}
-
-static bool
-is_subroutine_uniform_program_interface(GLenum programInterface)
-{
-   switch(programInterface) {
-   case GL_VERTEX_SUBROUTINE_UNIFORM:
-   case GL_TESS_CONTROL_SUBROUTINE_UNIFORM:
-   case GL_TESS_EVALUATION_SUBROUTINE_UNIFORM:
-   case GL_GEOMETRY_SUBROUTINE_UNIFORM:
-   case GL_FRAGMENT_SUBROUTINE_UNIFORM:
-   case GL_COMPUTE_SUBROUTINE_UNIFORM:
-      return true;
-   default:
-      return false;
-   }
 }
 
 void GLAPIENTRY
@@ -174,49 +120,9 @@ _mesa_GetProgramInterfaceiv(GLuint program, GLenum programInterface,
    /* Validate pname against interface. */
    switch(pname) {
    case GL_ACTIVE_RESOURCES:
-      if (is_subroutine_uniform_program_interface(programInterface)) {
-         /* ARB_program_interface_query doesn't explicitly says that those
-          * uniforms would need a linked shader, or that should fail if it is
-          * not the case, but Section 7.6 (Uniform Variables) of the OpenGL
-          * 4.4 Core Profile says:
-          *
-          *    "A uniform is considered an active uniform if the compiler and
-          *     linker determine that the uniform will actually be accessed
-          *     when the executable code is executed. In cases where the
-          *     compiler and linker cannot make a conclusive determination,
-          *     the uniform will be considered active."
-          *
-          * So in order to know the real number of active subroutine uniforms
-          * we would need a linked shader .
-          *
-          * At the same time, Section 7.3 (Program Objects) of the OpenGL 4.4
-          * Core Profile says:
-          *
-          *    "The GL provides various commands allowing applications to
-          *     enumerate and query properties of active variables and in-
-          *     terface blocks for a specified program. If one of these
-          *     commands is called with a program for which LinkProgram
-          *     succeeded, the information recorded when the program was
-          *     linked is returned. If one of these commands is called with a
-          *     program for which LinkProgram failed, no error is generated
-          *     unless otherwise noted."
-          *     <skip>
-          *    "If one of these commands is called with a program for which
-          *     LinkProgram had never been called, no error is generated
-          *     unless otherwise noted, and the program object is considered
-          *     to have no active variables or interface blocks."
-          *
-          * So if the program is not linked we will return 0.
-          */
-         struct gl_linked_shader *sh =
-            lookup_linked_shader(program, programInterface, "glGetProgramInterfaceiv");
-
-         *params = sh ? sh->NumSubroutineUniforms : 0;
-      } else {
-         for (i = 0, *params = 0; i < shProg->NumProgramResourceList; i++)
-            if (shProg->ProgramResourceList[i].Type == programInterface)
-               (*params)++;
-      }
+      for (i = 0, *params = 0; i < shProg->data->NumProgramResourceList; i++)
+         if (shProg->data->ProgramResourceList[i].Type == programInterface)
+            (*params)++;
       break;
    case GL_MAX_NAME_LENGTH:
       if (programInterface == GL_ATOMIC_COUNTER_BUFFER ||
@@ -230,32 +136,32 @@ _mesa_GetProgramInterfaceiv(GLuint program, GLenum programInterface,
       /* Name length consists of base name, 3 additional chars '[0]' if
        * resource is an array and finally 1 char for string terminator.
        */
-      for (i = 0, *params = 0; i < shProg->NumProgramResourceList; i++) {
-         if (shProg->ProgramResourceList[i].Type != programInterface)
+      for (i = 0, *params = 0; i < shProg->data->NumProgramResourceList; i++) {
+         if (shProg->data->ProgramResourceList[i].Type != programInterface)
             continue;
          unsigned len =
-            _mesa_program_resource_name_len(&shProg->ProgramResourceList[i]);
+            _mesa_program_resource_name_len(&shProg->data->ProgramResourceList[i]);
          *params = MAX2(*params, len + 1);
       }
       break;
    case GL_MAX_NUM_ACTIVE_VARIABLES:
       switch (programInterface) {
       case GL_UNIFORM_BLOCK:
-         for (i = 0, *params = 0; i < shProg->NumProgramResourceList; i++) {
-            if (shProg->ProgramResourceList[i].Type == programInterface) {
+         for (i = 0, *params = 0; i < shProg->data->NumProgramResourceList; i++) {
+            if (shProg->data->ProgramResourceList[i].Type == programInterface) {
                struct gl_uniform_block *block =
                   (struct gl_uniform_block *)
-                  shProg->ProgramResourceList[i].Data;
+                  shProg->data->ProgramResourceList[i].Data;
                *params = MAX2(*params, block->NumUniforms);
             }
          }
          break;
       case GL_SHADER_STORAGE_BLOCK:
-         for (i = 0, *params = 0; i < shProg->NumProgramResourceList; i++) {
-            if (shProg->ProgramResourceList[i].Type == programInterface) {
+         for (i = 0, *params = 0; i < shProg->data->NumProgramResourceList; i++) {
+            if (shProg->data->ProgramResourceList[i].Type == programInterface) {
                struct gl_uniform_block *block =
                   (struct gl_uniform_block *)
-                  shProg->ProgramResourceList[i].Data;
+                  shProg->data->ProgramResourceList[i].Data;
                GLint block_params = 0;
                for (unsigned j = 0; j < block->NumUniforms; j++) {
                   const char *iname = block->Uniforms[j].IndexName;
@@ -271,21 +177,21 @@ _mesa_GetProgramInterfaceiv(GLuint program, GLenum programInterface,
          }
          break;
       case GL_ATOMIC_COUNTER_BUFFER:
-         for (i = 0, *params = 0; i < shProg->NumProgramResourceList; i++) {
-            if (shProg->ProgramResourceList[i].Type == programInterface) {
+         for (i = 0, *params = 0; i < shProg->data->NumProgramResourceList; i++) {
+            if (shProg->data->ProgramResourceList[i].Type == programInterface) {
                struct gl_active_atomic_buffer *buffer =
                   (struct gl_active_atomic_buffer *)
-                  shProg->ProgramResourceList[i].Data;
+                  shProg->data->ProgramResourceList[i].Data;
                *params = MAX2(*params, buffer->NumUniforms);
             }
          }
          break;
       case GL_TRANSFORM_FEEDBACK_BUFFER:
-         for (i = 0, *params = 0; i < shProg->NumProgramResourceList; i++) {
-            if (shProg->ProgramResourceList[i].Type == programInterface) {
+         for (i = 0, *params = 0; i < shProg->data->NumProgramResourceList; i++) {
+            if (shProg->data->ProgramResourceList[i].Type == programInterface) {
                struct gl_transform_feedback_buffer *buffer =
                   (struct gl_transform_feedback_buffer *)
-                  shProg->ProgramResourceList[i].Data;
+                  shProg->data->ProgramResourceList[i].Data;
                *params = MAX2(*params, buffer->NumVaryings);
             }
          }
@@ -295,7 +201,7 @@ _mesa_GetProgramInterfaceiv(GLuint program, GLenum programInterface,
                     "glGetProgramInterfaceiv(%s pname %s)",
                     _mesa_enum_to_string(programInterface),
                     _mesa_enum_to_string(pname));
-      };
+      }
       break;
    case GL_MAX_NUM_COMPATIBLE_SUBROUTINES:
       switch (programInterface) {
@@ -305,11 +211,11 @@ _mesa_GetProgramInterfaceiv(GLuint program, GLenum programInterface,
       case GL_COMPUTE_SUBROUTINE_UNIFORM:
       case GL_TESS_CONTROL_SUBROUTINE_UNIFORM:
       case GL_TESS_EVALUATION_SUBROUTINE_UNIFORM: {
-         for (i = 0, *params = 0; i < shProg->NumProgramResourceList; i++) {
-            if (shProg->ProgramResourceList[i].Type == programInterface) {
+         for (i = 0, *params = 0; i < shProg->data->NumProgramResourceList; i++) {
+            if (shProg->data->ProgramResourceList[i].Type == programInterface) {
                struct gl_uniform_storage *uni =
                   (struct gl_uniform_storage *)
-                  shProg->ProgramResourceList[i].Data;
+                  shProg->data->ProgramResourceList[i].Data;
                *params = MAX2(*params, uni->num_compatible_subroutines);
             }
          }
@@ -500,7 +406,7 @@ _mesa_GetProgramResourceLocation(GLuint program, GLenum programInterface,
    }
 
    struct gl_shader_program *shProg =
-      lookup_linked_program(program, "glGetProgramResourceLocation", true);
+      lookup_linked_program(program, "glGetProgramResourceLocation");
 
    if (!shProg || !name)
       return -1;
@@ -556,7 +462,7 @@ _mesa_GetProgramResourceLocationIndex(GLuint program, GLenum programInterface,
    }
 
    struct gl_shader_program *shProg =
-      lookup_linked_program(program, "glGetProgramResourceLocationIndex", true);
+      lookup_linked_program(program, "glGetProgramResourceLocationIndex");
 
    if (!shProg || !name)
       return -1;

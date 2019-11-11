@@ -109,7 +109,6 @@ static const char *key_names[PRIVATE_LAST] = {
     /*[PRIVATE_CURSOR_BITS] =*/ "CURSOR_BITS",
 
     /* extension privates */
-    /*[PRIVATE_DAMAGE] =*/ "DAMAGE",
     /*[PRIVATE_GLYPH] =*/ "GLYPH",
     /*[PRIVATE_GLYPHSET] =*/ "GLYPHSET",
     /*[PRIVATE_PICTURE] =*/ "PICTURE",
@@ -130,7 +129,6 @@ static const Bool screen_specific_private[PRIVATE_LAST] = {
     /*[PRIVATE_GC] =*/ TRUE,
     /*[PRIVATE_CURSOR] =*/ FALSE,
     /*[PRIVATE_CURSOR_BITS] =*/ FALSE,
-    /*[PRIVATE_DAMAGE] =*/ FALSE,
     /*[PRIVATE_GLYPH] =*/ FALSE,
     /*[PRIVATE_GLYPHSET] =*/ FALSE,
     /*[PRIVATE_PICTURE] =*/ TRUE,
@@ -310,7 +308,6 @@ static Bool (*const allocated_early[PRIVATE_LAST]) (FixupFunc, unsigned) = {
     /*PRIVATE_GC,*/           NULL,
     /*PRIVATE_CURSOR,*/       NULL,
     /*PRIVATE_CURSOR_BITS,*/  NULL,
-    /*PRIVATE_DAMAGE,*/       NULL,
     /*PRIVATE_GLYPH,*/        NULL,
     /*PRIVATE_GLYPHSET,*/     NULL,
     /*PRIVATE_PICTURE,*/      NULL,
@@ -594,8 +591,6 @@ static const int offsets[] = {
     offsetof(ColormapRec, devPrivates), /* RT_COLORMAP */
 };
 
-#define NUM_OFFSETS	(sizeof (offsets) / sizeof (offsets[0]))
-
 int
 dixLookupPrivateOffset(RESTYPE type)
 {
@@ -610,7 +605,7 @@ dixLookupPrivateOffset(RESTYPE type)
             return offsets[RT_PIXMAP & TypeMask];
     }
     type = type & TypeMask;
-    if (type < NUM_OFFSETS)
+    if (type < ARRAY_SIZE(offsets))
         return offsets[type];
     return -1;
 }
@@ -804,4 +799,13 @@ dixResetPrivates(void)
         global_keys[t].created = 0;
         global_keys[t].allocated = 0;
     }
+}
+
+Bool
+dixPrivatesCreated(DevPrivateType type)
+{
+    if (global_keys[type].created)
+        return TRUE;
+    else
+        return FALSE;
 }

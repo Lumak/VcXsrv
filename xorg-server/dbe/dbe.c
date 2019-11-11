@@ -116,15 +116,15 @@ static int
 ProcDbeGetVersion(ClientPtr client)
 {
     /* REQUEST(xDbeGetVersionReq); */
-    xDbeGetVersionReply rep;
+    xDbeGetVersionReply rep = {
+        .type = X_Reply,
+        .sequenceNumber = client->sequence,
+        .length = 0,
+        .majorVersion = DBE_MAJOR_VERSION,
+        .minorVersion = DBE_MINOR_VERSION
+    };
 
     REQUEST_SIZE_MATCH(xDbeGetVersionReq);
-
-    rep.type = X_Reply;
-    rep.length = 0;
-    rep.sequenceNumber = client->sequence;
-    rep.majorVersion = DBE_MAJOR_VERSION;
-    rep.minorVersion = DBE_MINOR_VERSION;
 
     if (client->swapped) {
         swaps(&rep.sequenceNumber);
@@ -574,6 +574,9 @@ ProcDbeGetVisualInfo(ClientPtr client)
     XdbeScreenVisualInfo *pScrVisInfo;
 
     REQUEST_AT_LEAST_SIZE(xDbeGetVisualInfoReq);
+    if (stuff->n > UINT32_MAX / sizeof(CARD32))
+        return BadLength;
+    REQUEST_FIXED_SIZE(xDbeGetVisualInfoReq, stuff->n * sizeof(CARD32));
 
     if (stuff->n > UINT32_MAX / sizeof(DrawablePtr))
         return BadAlloc;
@@ -628,10 +631,12 @@ ProcDbeGetVisualInfo(ClientPtr client)
         length += pScrVisInfo[i].count * sizeof(xDbeVisInfo);
     }
 
-    rep.type = X_Reply;
-    rep.sequenceNumber = client->sequence;
-    rep.length = bytes_to_int32(length);
-    rep.m = count;
+    rep = (xDbeGetVisualInfoReply) {
+        .type = X_Reply,
+        .sequenceNumber = client->sequence,
+        .length = bytes_to_int32(length),
+        .m = count
+    };
 
     if (client->swapped) {
         swaps(&rep.sequenceNumber);
@@ -716,7 +721,11 @@ static int
 ProcDbeGetBackBufferAttributes(ClientPtr client)
 {
     REQUEST(xDbeGetBackBufferAttributesReq);
-    xDbeGetBackBufferAttributesReply rep;
+    xDbeGetBackBufferAttributesReply rep = {
+        .type = X_Reply,
+        .sequenceNumber = client->sequence,
+        .length = 0
+    };
     DbeWindowPrivPtr pDbeWindowPriv;
     int rc;
 
@@ -731,10 +740,6 @@ ProcDbeGetBackBufferAttributes(ClientPtr client)
     else {
         rep.attributes = None;
     }
-
-    rep.type = X_Reply;
-    rep.sequenceNumber = client->sequence;
-    rep.length = 0;
 
     if (client->swapped) {
         swaps(&rep.sequenceNumber);
@@ -809,7 +814,7 @@ ProcDbeDispatch(ClientPtr client)
  *
  *****************************************************************************/
 
-static int
+static int _X_COLD
 SProcDbeGetVersion(ClientPtr client)
 {
     REQUEST(xDbeGetVersionReq);
@@ -842,7 +847,7 @@ SProcDbeGetVersion(ClientPtr client)
  *
  *****************************************************************************/
 
-static int
+static int _X_COLD
 SProcDbeAllocateBackBufferName(ClientPtr client)
 {
     REQUEST(xDbeAllocateBackBufferNameReq);
@@ -875,7 +880,7 @@ SProcDbeAllocateBackBufferName(ClientPtr client)
  *
  *****************************************************************************/
 
-static int
+static int _X_COLD
 SProcDbeDeallocateBackBufferName(ClientPtr client)
 {
     REQUEST(xDbeDeallocateBackBufferNameReq);
@@ -910,7 +915,7 @@ SProcDbeDeallocateBackBufferName(ClientPtr client)
  *
  *****************************************************************************/
 
-static int
+static int _X_COLD
 SProcDbeSwapBuffers(ClientPtr client)
 {
     REQUEST(xDbeSwapBuffersReq);
@@ -922,7 +927,7 @@ SProcDbeSwapBuffers(ClientPtr client)
 
     swapl(&stuff->n);
     if (stuff->n > UINT32_MAX / sizeof(DbeSwapInfoRec))
-        return BadAlloc;
+        return BadLength;
     REQUEST_FIXED_SIZE(xDbeSwapBuffersReq, stuff->n * sizeof(xDbeSwapInfo));
 
     if (stuff->n != 0) {
@@ -958,7 +963,7 @@ SProcDbeSwapBuffers(ClientPtr client)
  *
  *****************************************************************************/
 
-static int
+static int _X_COLD
 SProcDbeGetVisualInfo(ClientPtr client)
 {
     REQUEST(xDbeGetVisualInfoReq);
@@ -989,7 +994,7 @@ SProcDbeGetVisualInfo(ClientPtr client)
  *
  *****************************************************************************/
 
-static int
+static int _X_COLD
 SProcDbeGetBackBufferAttributes(ClientPtr client)
 {
     REQUEST(xDbeGetBackBufferAttributesReq);
@@ -1013,7 +1018,7 @@ SProcDbeGetBackBufferAttributes(ClientPtr client)
  *
  *****************************************************************************/
 
-static int
+static int _X_COLD
 SProcDbeDispatch(ClientPtr client)
 {
     REQUEST(xReq);

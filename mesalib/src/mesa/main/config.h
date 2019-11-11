@@ -32,9 +32,7 @@
 #define MESA_CONFIG_H_INCLUDED
 
 
-#define PACKAGE_VERSION  "9.2-devel"
 #define PACKAGE_BUGREPORT "https://bugs.freedesktop.org/enter_bug.cgi?product=Mesa"
-
 
 /**
  * \name OpenGL implementation limits
@@ -202,7 +200,6 @@
 #define MAX_PROGRAM_CALL_DEPTH         8
 #define MAX_PROGRAM_TEMPS              256
 #define MAX_PROGRAM_ADDRESS_REGS       1
-#define MAX_VARYING                    32    /**< number of float[4] vectors */
 #define MAX_SAMPLERS                   MAX_TEXTURE_IMAGE_UNITS
 #define MAX_PROGRAM_INPUTS             32
 #define MAX_PROGRAM_OUTPUTS            64
@@ -319,5 +316,14 @@
  */
 #define MAX_CLIPPED_VERTICES ((2 * (6 + MAX_CLIP_PLANES))+1)
 
+
+/** For GL_ARB_sample_locations - maximum of SAMPLE_LOCATION_PIXEL_GRID_*_ARB */
+#define MAX_SAMPLE_LOCATION_GRID_SIZE 4
+
+/* It is theoretically possible for Consts.MaxSamples to be >32 but
+ * other code seems to assume that is not the case.
+ */
+#define MAX_SAMPLE_LOCATION_TABLE_SIZE \
+   (MAX_SAMPLE_LOCATION_GRID_SIZE * MAX_SAMPLE_LOCATION_GRID_SIZE * 32)
 
 #endif /* MESA_CONFIG_H_INCLUDED */

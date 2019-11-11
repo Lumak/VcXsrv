@@ -28,6 +28,7 @@
 #include "main/accum.h"
 #include "main/arrayobj.h"
 #include "main/context.h"
+#include "main/draw.h"
 #include "main/formatquery.h"
 #include "main/framebuffer.h"
 #include "main/mipmap.h"
@@ -49,6 +50,7 @@
 #include "main/syncobj.h"
 #include "main/barrier.h"
 #include "main/transformfeedback.h"
+#include "main/externalobjects.h"
 
 #include "program/program.h"
 #include "tnl/tnl.h"
@@ -100,7 +102,6 @@ _mesa_init_driver_functions(struct dd_function_table *driver)
    driver->TestProxyTexImage = _mesa_test_proxy_teximage;
    driver->CompressedTexImage = _mesa_store_compressed_teximage;
    driver->CompressedTexSubImage = _mesa_store_compressed_texsubimage;
-   driver->GetCompressedTexSubImage = _mesa_GetCompressedTexSubImage_sw;
    driver->BindTexture = NULL;
    driver->NewTextureObject = _mesa_new_texture_object;
    driver->DeleteTexture = _mesa_delete_texture_object;
@@ -113,12 +114,15 @@ _mesa_init_driver_functions(struct dd_function_table *driver)
    driver->DrawTex = _mesa_meta_DrawTex;
 
    /* Vertex/fragment programs */
-   driver->BindProgram = NULL;
    driver->NewProgram = _mesa_new_program;
    driver->DeleteProgram = _mesa_delete_program;
 
    /* ATI_fragment_shader */
    driver->NewATIfs = NULL;
+
+   /* Draw functions */
+   driver->Draw = NULL;
+   driver->DrawIndirect = _mesa_draw_indirect;
 
    /* simple state commands */
    driver->AlphaFunc = NULL;
@@ -130,7 +134,6 @@ _mesa_init_driver_functions(struct dd_function_table *driver)
    driver->ColorMaterial = NULL;
    driver->CullFace = NULL;
    driver->DrawBuffer = NULL;
-   driver->DrawBuffers = NULL;
    driver->FrontFace = NULL;
    driver->DepthFunc = NULL;
    driver->DepthMask = NULL;
@@ -167,6 +170,9 @@ _mesa_init_driver_functions(struct dd_function_table *driver)
 
    _mesa_init_sync_object_functions(driver);
 
+   /* memory objects */
+   _mesa_init_memory_object_functions(driver);
+
    driver->NewFramebuffer = _mesa_new_framebuffer;
    driver->NewRenderbuffer = _swrast_new_soft_renderbuffer;
    driver->MapRenderbuffer = _swrast_map_soft_renderbuffer;
@@ -201,6 +207,9 @@ _mesa_init_driver_functions(struct dd_function_table *driver)
 
    /* GL_ARB_texture_multisample */
    driver->GetSamplePosition = NULL;
+
+   /* Multithreading */
+   driver->SetBackgroundContext = NULL;
 }
 
 
@@ -227,10 +236,10 @@ _mesa_init_driver_state(struct gl_context *ctx)
                                  ctx->Color.Blend[0].DstA);
 
    ctx->Driver.ColorMask(ctx,
-                         ctx->Color.ColorMask[0][RCOMP],
-                         ctx->Color.ColorMask[0][GCOMP],
-                         ctx->Color.ColorMask[0][BCOMP],
-                         ctx->Color.ColorMask[0][ACOMP]);
+                         GET_COLORMASK_BIT(ctx->Color.ColorMask, 0, 0),
+                         GET_COLORMASK_BIT(ctx->Color.ColorMask, 0, 1),
+                         GET_COLORMASK_BIT(ctx->Color.ColorMask, 0, 2),
+                         GET_COLORMASK_BIT(ctx->Color.ColorMask, 0, 3));
 
    ctx->Driver.CullFace(ctx, ctx->Polygon.CullFaceMode);
    ctx->Driver.DepthFunc(ctx, ctx->Depth.Func);
@@ -248,7 +257,7 @@ _mesa_init_driver_state(struct gl_context *ctx)
    ctx->Driver.Enable(ctx, GL_LINE_SMOOTH, ctx->Line.SmoothFlag);
    ctx->Driver.Enable(ctx, GL_POLYGON_STIPPLE, ctx->Polygon.StippleFlag);
    ctx->Driver.Enable(ctx, GL_SCISSOR_TEST, ctx->Scissor.EnableFlags);
-   ctx->Driver.Enable(ctx, GL_STENCIL_TEST, ctx->Stencil._Enabled);
+   ctx->Driver.Enable(ctx, GL_STENCIL_TEST, ctx->Stencil.Enabled);
    ctx->Driver.Enable(ctx, GL_TEXTURE_1D, GL_FALSE);
    ctx->Driver.Enable(ctx, GL_TEXTURE_2D, GL_FALSE);
    ctx->Driver.Enable(ctx, GL_TEXTURE_RECTANGLE_NV, GL_FALSE);
@@ -272,7 +281,7 @@ _mesa_init_driver_state(struct gl_context *ctx)
    }
 
    ctx->Driver.LineWidth(ctx, ctx->Line.Width);
-   ctx->Driver.LogicOpcode(ctx, ctx->Color.LogicOp);
+   ctx->Driver.LogicOpcode(ctx, ctx->Color._LogicOp);
    ctx->Driver.PointSize(ctx, ctx->Point.Size);
    ctx->Driver.PolygonStipple(ctx, (const GLubyte *) ctx->PolygonStipple);
    ctx->Driver.Scissor(ctx);
@@ -297,5 +306,5 @@ _mesa_init_driver_state(struct gl_context *ctx)
                                  ctx->Stencil.ZPassFunc[1]);
 
 
-   ctx->Driver.DrawBuffer(ctx, ctx->Color.DrawBuffer[0]);
+   ctx->Driver.DrawBuffer(ctx);
 }

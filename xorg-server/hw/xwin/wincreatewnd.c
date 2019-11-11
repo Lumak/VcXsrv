@@ -70,14 +70,14 @@ winCreateBoundingWindowFullScreen(ScreenPtr pScreen)
     wc.style = CS_HREDRAW | CS_VREDRAW;
     wc.lpfnWndProc = winWindowProc;
     wc.cbClsExtra = 0;
-    wc.cbWndExtra = 0;
+    wc.cbWndExtra = WND_EXTRABYTES;
     wc.hInstance = g_hInstance;
     wc.hIcon =
         (HICON) LoadImage(g_hInstance, MAKEINTRESOURCE(IDI_XWIN), IMAGE_ICON,
                           GetSystemMetrics(SM_CXICON),
                           GetSystemMetrics(SM_CYICON), 0);
     wc.hCursor = 0;
-    wc.hbrBackground = 0;
+    wc.hbrBackground = NULL;
     wc.lpszMenuName = NULL;
     wc.lpszClassName = WINDOW_CLASS;
     wc.hIconSm =
@@ -108,7 +108,7 @@ winCreateBoundingWindowFullScreen(ScreenPtr pScreen)
                              iHeight,   /* Bottom edge */
                              (HWND) NULL,       /* No parent or owner window */
                              (HMENU) NULL,      /* No menu */
-                             GetModuleHandle(NULL),     /* Instance handle */
+                             g_hInstance,     /* Instance handle */
                              pScreenPriv);      /* ScreenPrivates */
 
     /* Hide the window */
@@ -160,9 +160,7 @@ winCreateBoundingWindowWindowed(ScreenPtr pScreen)
         && !pScreenInfo->fMWExtWM
 #endif
         && !pScreenInfo->fRootless
-#ifdef XWIN_MULTIWINDOW
         && !pScreenInfo->fMultiWindow
-#endif
         ) {
         /* Try to handle startup via run.exe. run.exe instructs Windows to
          * hide all created windows. Detect this case and make sure the
@@ -186,14 +184,14 @@ winCreateBoundingWindowWindowed(ScreenPtr pScreen)
     wc.style = CS_HREDRAW | CS_VREDRAW;
     wc.lpfnWndProc = winWindowProc;
     wc.cbClsExtra = 0;
-    wc.cbWndExtra = 0;
+    wc.cbWndExtra = WND_EXTRABYTES;
     wc.hInstance = g_hInstance;
     wc.hIcon =
         (HICON) LoadImage(g_hInstance, MAKEINTRESOURCE(IDI_XWIN), IMAGE_ICON,
                           GetSystemMetrics(SM_CXICON),
                           GetSystemMetrics(SM_CYICON), 0);
     wc.hCursor = 0;
-    wc.hbrBackground = (HBRUSH) GetStockObject(WHITE_BRUSH);
+    wc.hbrBackground = NULL;
     wc.lpszMenuName = NULL;
     wc.lpszClassName = WINDOW_CLASS;
     wc.hIconSm =
@@ -224,9 +222,7 @@ winCreateBoundingWindowWindowed(ScreenPtr pScreen)
          || pScreenInfo->fMWExtWM
 #endif
          || pScreenInfo->fRootless
-#ifdef XWIN_MULTIWINDOW
          || pScreenInfo->fMultiWindow
-#endif
         )
         && (pScreenInfo->iResizeMode == resizeWithScrollbars)) {
         /* We cannot have scrollbars if we do not have a window border */
@@ -245,9 +241,7 @@ winCreateBoundingWindowWindowed(ScreenPtr pScreen)
             && !pScreenInfo->fMWExtWM
 #endif
             && !pScreenInfo->fRootless
-#ifdef XWIN_MULTIWINDOW
             && !pScreenInfo->fMultiWindow
-#endif
             ) {
             winDebug
                 ("winCreateBoundingWindowWindowed - Window has decoration\n");
@@ -287,9 +281,7 @@ winCreateBoundingWindowWindowed(ScreenPtr pScreen)
 #ifdef XWIN_MULTIWINDOWEXTWM
         && !pScreenInfo->fMWExtWM
 #endif
-#ifdef XWIN_MULTIWINDOW
         && !pScreenInfo->fMultiWindow
-#endif
         ) {
         /* Trim window width to fit work area */
         if (iWidth > (rcWorkArea.right - rcWorkArea.left))
@@ -326,7 +318,7 @@ winCreateBoundingWindowWindowed(ScreenPtr pScreen)
                              iHeight,   /* Bottom edge */
                              (HWND) NULL,       /* No parent or owner window */
                              (HMENU) NULL,      /* No menu */
-                             GetModuleHandle(NULL),     /* Instance handle */
+                             g_hInstance,     /* Instance handle */
                              pScreenPriv);      /* ScreenPrivates */
     if (*phwnd == NULL) {
         ErrorF("winCreateBoundingWindowWindowed - CreateWindowEx () failed\n");
@@ -422,13 +414,9 @@ winCreateBoundingWindowWindowed(ScreenPtr pScreen)
 #ifdef XWIN_MULTIWINDOWEXTWM
         || pScreenInfo->fMWExtWM
 #endif
-#ifdef XWIN_MULTIWINDOW
         || pScreenInfo->fMultiWindow
-#endif
         ) {
-#if defined(XWIN_MULTIWINDOW) || defined(XWIN_MULTIWINDOWEXTWM)
         pScreenPriv->fRootWindowShown = FALSE;
-#endif
         ShowWindow(*phwnd, SW_HIDE);
     }
     else
@@ -444,9 +432,7 @@ winCreateBoundingWindowWindowed(ScreenPtr pScreen)
         && !pScreenInfo->fMWExtWM
 #endif
         && !pScreenInfo->fRootless
-#ifdef XWIN_MULTIWINDOW
         && !pScreenInfo->fMultiWindow
-#endif
         ) {
         if (!BringWindowToTop(*phwnd)) {
             ErrorF("winCreateBoundingWindowWindowed - BringWindowToTop () "

@@ -2,7 +2,7 @@
 // Maintainer  : Harshula Jayasuriya <harshula@gmail.com>
 // Last Updated: 2011-05-25
 // This is a phonetic static mapping for a standard US-English keyboard
-// (qwerty)
+// (QWERTY)
 // http://www.nongnu.org/sinhala/doc/keymaps/sinhala-keyboard_3.html
 
 // Repaya, Rakaransaya and Yansaya aren't inserted with A-r, R and Y,
@@ -78,14 +78,14 @@ xkb_symbols "sin_phonetic" {
 
 partial alphanumeric_keys
 xkb_symbols "tam_unicode" {
-    include "in(tam_unicode)"
-    name[Group1]= "Tamil (Sri Lanka, Unicode)";
+    include "in(tam_tamilnet)"
+    name[Group1]= "Tamil (Sri Lanka, TamilNet '99)";
 };
 
 partial alphanumeric_keys
 xkb_symbols "tam_TAB" {
-    include "in(tam_TAB)"
-    name[Group1]= "Tamil (Sri Lanka, TAB Typewriter)";
+    include "in(tam_tamilnet_TAB)"
+    name[Group1]= "Tamil (Sri Lanka, TamilNet '99, TAB encoding)";
 };
 
 // SINHALA - US, SUBSTITUTES SOME AND ADDS SOME
@@ -123,7 +123,7 @@ xkb_symbols "tam_TAB" {
 partial alphanumeric_keys modifier_keys
 xkb_symbols "us" {
   include "us(basic)"
-  name[Group1]= "Sinhala (US keyboard with Sinhala letters)";
+  name[Group1]= "Sinhala (US, with Sinhala letters)";
 //
 //                   UNSHIFTED,         SHIFT,           ALT
 //                   --------------------------------------------
@@ -141,7 +141,7 @@ xkb_symbols "us" {
 
   key <AC01> { [             a,        aacute,    adiaeresis ] };
   key <AC02> { [             s,    VoidSymbol,    VoidSymbol ] };
-  key <AC03> { [             d,             D,    VoidSymbol ] };
+  key <AC03> { [           eth,           ETH,    VoidSymbol ] };
   key <AC04> { [         thorn,             f,    VoidSymbol ] };
   key <AC05> { [             g,             G,    VoidSymbol ] };
   key <AC06> { [             h,    VoidSymbol,    VoidSymbol ] };
@@ -151,7 +151,7 @@ xkb_symbols "us" {
   key <AC10> { [     semicolon,         colon,    VoidSymbol ] };
   key <AC11> { [    apostrophe,      quotedbl,    VoidSymbol ] };
 
-  key <AD01> { [           eth,           ETH,             q ] };
+  key <AD01> { [             d,             D,             q ] };
   key <AD02> { [            ae,         acute,    VoidSymbol ] };
   key <AD03> { [             e,        eacute,    ediaeresis ] };
   key <AD04> { [             r,   ucircumflex,    VoidSymbol ] };
@@ -164,16 +164,16 @@ xkb_symbols "us" {
   key <AD11> { [   bracketleft,     braceleft,    VoidSymbol ] };
   key <AD12> { [  bracketright,    braceright,    VoidSymbol ] };
 
-  key <AE01> { [           one,        exclam,   dead_macron ] };
-  key <AE02> { [           two,            at, dead_belowdot ] };
-  key <AE03> { [         three,    numbersign, dead_abovedot ] };
-  key <AE04> { [          four,        dollar,      currency ] };
-  key <AE05> { [          five,       percent,           UB0 ] };
-  key <AE06> { [           six,   asciicircum,    onequarter ] };
-  key <AE07> { [         seven,     ampersand,       onehalf ] };
-  key <AE08> { [         eight,      asterisk, threequarters ] };
-  key <AE09> { [          nine,     parenleft,    VoidSymbol ] };
-  key <AE10> { [          zero,    parenright,    VoidSymbol ] };
+  key <AE01> { [             1,        exclam,   dead_macron ] };
+  key <AE02> { [             2,            at, dead_belowdot ] };
+  key <AE03> { [             3,    numbersign, dead_abovedot ] };
+  key <AE04> { [             4,        dollar,      currency ] };
+  key <AE05> { [             5,       percent,           UB0 ] };
+  key <AE06> { [             6,   asciicircum,    onequarter ] };
+  key <AE07> { [             7,     ampersand,       onehalf ] };
+  key <AE08> { [             8,      asterisk, threequarters ] };
+  key <AE09> { [             9,     parenleft,    VoidSymbol ] };
+  key <AE10> { [             0,    parenright,    VoidSymbol ] };
   key <AE11> { [         minus,    underscore,         U2014 ] };
   key <AE12> { [         equal,          plus,    VoidSymbol ] };
 

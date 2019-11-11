@@ -1,12 +1,14 @@
 import filecmp
 import os
 import subprocess
+from sys import executable as python_cmd
 
 Import('*')
 
 if env['platform'] == 'windows':
     SConscript('getopt/SConscript')
 
+SConscript('util/xmlpool/SConscript')
 SConscript('util/SConscript')
 SConscript('compiler/SConscript')
 
@@ -22,34 +24,12 @@ def write_git_sha1_h_file(filename):
     to retrieve the git hashid and write the header file.  An empty file
     will be created if anything goes wrong."""
 
-    args = [ 'git', 'rev-parse', '--short=10', 'HEAD' ]
+    args = [ python_cmd, Dir('#').abspath + '/bin/git_sha1_gen.py', '--output', filename ]
     try:
-        (commit, foo) = subprocess.Popen(args, stdout=subprocess.PIPE).communicate()
+        subprocess.call(args)
     except:
-        print "Warning: exception in write_git_sha1_h_file()"
-        # git log command didn't work
-        if not os.path.exists(filename):
-            dirname = os.path.dirname(filename)
-            if dirname and not os.path.exists(dirname):
-                os.makedirs(dirname)
-            # create an empty file if none already exists
-            f = open(filename, "w")
-            f.close()
+        print("Warning: exception in write_git_sha1_h_file()")
         return
-
-    # note that commit[:-1] removes the trailing newline character
-    commit = '#define MESA_GIT_SHA1 "git-%s"\n' % commit[:-1]
-    tempfile = "git_sha1.h.tmp"
-    f = open(tempfile, "w")
-    f.write(commit)
-    f.close()
-    if not os.path.exists(filename) or not filecmp.cmp(tempfile, filename):
-        # The filename does not exist or it's different from the new file,
-        # so replace old file with new.
-        if os.path.exists(filename):
-            os.remove(filename)
-        os.rename(tempfile, filename)
-    return
 
 
 # Create the git_sha1.h header file
@@ -62,10 +42,6 @@ env.Append(CPPPATH = ["#" + env['build_dir']])
 if env['platform'] != 'windows':
     SConscript('loader/SConscript')
 
-# When env['gles'] is set, the targets defined in mapi/glapi/SConscript are not
-# used.  libgl-xlib and libgl-gdi adapt themselves to use the targets defined
-# in mapi/glapi-shared/SConscript.  mesa/SConscript also adapts itself to
-# enable OpenGL ES support.
 SConscript('mapi/glapi/gen/SConscript')
 SConscript('mapi/glapi/SConscript')
 
@@ -80,9 +56,6 @@ if not env['embedded']:
         SConscript('glx/SConscript')
     if env['platform'] == 'haiku':
         SConscript('egl/SConscript')
-
-    if env['gles']:
-        SConscript('mapi/shared-glapi/SConscript')
 
 SConscript('gallium/SConscript')
 

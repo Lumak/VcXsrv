@@ -33,9 +33,6 @@ fbCreateWindow(WindowPtr pWin)
 {
     dixSetPrivate(&pWin->devPrivates, fbGetWinPrivateKey(pWin),
                   fbGetScreenPixmap(pWin->drawable.pScreen));
-    if (pWin->drawable.bitsPerPixel == 32 && pWin->drawable.depth <= 24)
-        pWin->drawable.bitsPerPixel =
-            fbGetScreenPrivate(pWin->drawable.pScreen)->win32bpp;
     return TRUE;
 }
 
@@ -80,21 +77,60 @@ fbCopyWindowProc(DrawablePtr pSrcDrawable,
     FbBits *dst;
     FbStride dstStride;
     int dstBpp;
+    int numerr = 0;
     int dstXoff, dstYoff;
 
     fbGetDrawable(pSrcDrawable, src, srcStride, srcBpp, srcXoff, srcYoff);
     fbGetDrawable(pDstDrawable, dst, dstStride, dstBpp, dstXoff, dstYoff);
 
-    while (nbox--) {
-        fbBlt(src + (pbox->y1 + dy + srcYoff) * srcStride,
-              srcStride,
-              (pbox->x1 + dx + srcXoff) * srcBpp,
-              dst + (pbox->y1 + dstYoff) * dstStride,
-              dstStride,
-              (pbox->x1 + dstXoff) * dstBpp,
-              (pbox->x2 - pbox->x1) * dstBpp,
-              (pbox->y2 - pbox->y1),
-              GXcopy, FB_ALLONES, dstBpp, reverse, upsidedown);
+    while (nbox--)
+    {
+        int srcYoffset = pbox->y1 + dy + srcYoff;
+        int dstYoffset = pbox->y1 + dstYoff;
+        int copyLines = (pbox->y2 - pbox->y1);
+        int copyLines_src = copyLines;
+        int copyLines_dst = copyLines;
+
+        // There is a crash with BitBlt, when moving bits on same source, but shifted for some pixels
+        if (srcYoffset >= pSrcDrawable->height ||
+            dstYoffset >= pDstDrawable->height )
+        {
+            numerr++;
+            ErrorF("fbCopyWindowProc ERROR\n");
+        }
+        else
+        {
+            if (srcYoffset < 0 )
+            {
+                copyLines_src += srcYoffset+1;
+                srcYoffset = 0;
+            }
+            else if ( (srcYoffset+copyLines) > pSrcDrawable->height )
+            {
+                copyLines_src = pSrcDrawable->height - srcYoffset;
+            }
+
+            if (dstYoffset < 0 )
+            {
+                copyLines_dst += dstYoffset+1;
+                dstYoffset = 0;
+            }
+            else if ( (dstYoffset+copyLines) > pDstDrawable->height )
+            {
+                copyLines_dst = pDstDrawable->height - dstYoffset;
+            }
+            copyLines = copyLines_src < copyLines_dst ? copyLines_src : copyLines_dst;
+
+            fbBlt(src + srcYoffset * srcStride,
+                  srcStride,
+                  (pbox->x1 + dx + srcXoff) * srcBpp,
+                  dst + dstYoffset * dstStride,
+                  dstStride,
+                  (pbox->x1 + dstXoff) * dstBpp,
+                  (pbox->x2 - pbox->x1) * dstBpp,
+                  copyLines,
+                  GXcopy, FB_ALLONES, dstBpp, reverse, upsidedown);
+        }
         pbox++;
     }
 
@@ -136,13 +172,6 @@ fbFixupWindowPixmap(DrawablePtr pDrawable, PixmapPtr *ppPixmap)
 {
     PixmapPtr pPixmap = *ppPixmap;
 
-    if (pPixmap->drawable.bitsPerPixel != pDrawable->bitsPerPixel) {
-        pPixmap = fb24_32ReformatTile(pPixmap, pDrawable->bitsPerPixel);
-        if (!pPixmap)
-            return;
-        (*pDrawable->pScreen->DestroyPixmap) (*ppPixmap);
-        *ppPixmap = pPixmap;
-    }
     if (FbEvenTile(pPixmap->drawable.width * pPixmap->drawable.bitsPerPixel))
         fbPadPixmap(pPixmap);
 }

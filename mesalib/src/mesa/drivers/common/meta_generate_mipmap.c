@@ -182,6 +182,7 @@ _mesa_meta_GenerateMipmap(struct gl_context *ctx, GLenum target,
 
    _mesa_meta_begin(ctx, MESA_META_ALL & ~MESA_META_DRAW_BUFFERS);
    _mesa_ColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+   _mesa_Disable(GL_DITHER);
 
    /* Choose between glsl version and fixed function version of
     * GenerateMipmap function.
@@ -200,10 +201,10 @@ _mesa_meta_GenerateMipmap(struct gl_context *ctx, GLenum target,
 
    /* We may have been called from glGenerateTextureMipmap with CurrentUnit
     * still set to 0, so we don't know when we can skip binding the texture.
-    * Assume that _mesa_BindTexture will be fast if we're rebinding the same
+    * Assume that _mesa_bind_texture will be fast if we're rebinding the same
     * texture.
     */
-   _mesa_BindTexture(target, texObj->Name);
+   _mesa_bind_texture(ctx, target, texObj);
 
    if (mipmap->samp_obj == NULL) {
       mipmap->samp_obj =  ctx->Driver.NewSamplerObject(ctx, 0xDEADBEEF);

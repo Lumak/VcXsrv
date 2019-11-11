@@ -29,7 +29,7 @@
 #include <stdio.h>
 
 #include "main/glheader.h"
-#include "main/mtypes.h"
+#include "prog_parameter.h"
 
 
 #ifdef __cplusplus
@@ -118,7 +118,7 @@ extern void
 _mesa_write_shader_to_file(const struct gl_shader *shader);
 
 extern void
-_mesa_append_uniforms_to_file(const struct gl_linked_shader *shader);
+_mesa_append_uniforms_to_file(const struct gl_program *prog);
 
 
 #ifdef __cplusplus

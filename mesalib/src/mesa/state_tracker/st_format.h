@@ -33,7 +33,6 @@
 #include "main/formats.h"
 #include "main/glheader.h"
 
-#include "pipe/p_defines.h"
 #include "pipe/p_format.h"
 
 #ifdef __cplusplus
@@ -45,7 +44,7 @@ struct pipe_screen;
 
 
 extern enum pipe_format
-st_mesa_format_to_pipe_format(struct st_context *st, mesa_format mesaFormat);
+st_mesa_format_to_pipe_format(const struct st_context *st, mesa_format mesaFormat);
 
 extern mesa_format
 st_pipe_format_to_mesa_format(enum pipe_format pipeFormat);
@@ -55,11 +54,13 @@ extern enum pipe_format
 st_choose_format(struct st_context *st, GLenum internalFormat,
                  GLenum format, GLenum type,
                  enum pipe_texture_target target, unsigned sample_count,
+                 unsigned storage_sample_count,
                  unsigned bindings, boolean allow_dxt);
 
 extern enum pipe_format
 st_choose_renderbuffer_format(struct st_context *st,
-                              GLenum internalFormat, unsigned sample_count);
+                              GLenum internalFormat, unsigned sample_count,
+                              unsigned storage_sample_count);
 
 extern enum pipe_format
 st_choose_matching_format(struct st_context *st, unsigned bind,

@@ -34,11 +34,14 @@ sources := \
 	main/enums.c \
 	main/api_exec.c \
 	main/dispatch.h \
+	main/format_fallback.c \
 	main/format_pack.c \
 	main/format_unpack.c \
 	main/format_info.h \
 	main/remap_helper.h \
-	main/get_hash.h
+	main/get_hash.h \
+	main/marshal_generated.c \
+	main/marshal_generated.h
 
 LOCAL_SRC_FILES := $(filter-out $(sources), $(LOCAL_SRC_FILES))
 
@@ -50,8 +53,6 @@ sources += x86/matypes.h
 LOCAL_C_INCLUDES += $(intermediates)/x86
 endif
 endif
-
-sources += main/git_sha1.h
 
 sources := $(addprefix $(intermediates)/, $(sources))
 
@@ -68,16 +69,6 @@ define es-gen
 	@echo "Gen ES: $(PRIVATE_MODULE) <= $(notdir $(@))"
 	$(hide) $(PRIVATE_SCRIPT) $(1) $(PRIVATE_XML) > $@
 endef
-
-$(intermediates)/main/git_sha1.h:
-	@mkdir -p $(dir $@)
-	@echo "GIT-SHA1: $(PRIVATE_MODULE) <= git"
-	$(hide) touch $@
-	$(hide) if which git > /dev/null; then \
-			git --git-dir $(PRIVATE_PATH)/../../.git log -n 1 --oneline | \
-			sed 's/^\([^ ]*\) .*/#define MESA_GIT_SHA1 "git-\1"/' \
-			> $@; \
-		fi
 
 matypes_deps := \
 	$(BUILD_OUT_EXECUTABLES)/mesa_gen_matypes$(BUILD_EXECUTABLE_SUFFIX) \
@@ -113,6 +104,18 @@ $(intermediates)/main/api_exec.c: PRIVATE_XML := -f $(glapi)/gl_and_es_API.xml
 $(intermediates)/main/api_exec.c: $(dispatch_deps)
 	$(call es-gen)
 
+$(intermediates)/main/marshal_generated.c: PRIVATE_SCRIPT := $(MESA_PYTHON2) $(glapi)/gl_marshal.py
+$(intermediates)/main/marshal_generated.c: PRIVATE_XML := -f $(glapi)/gl_and_es_API.xml
+
+$(intermediates)/main/marshal_generated.c: $(dispatch_deps)
+	$(call es-gen)
+
+$(intermediates)/main/marshal_generated.h: PRIVATE_SCRIPT := $(MESA_PYTHON2) $(glapi)/gl_marshal_h.py
+$(intermediates)/main/marshal_generated.h: PRIVATE_XML := -f $(glapi)/gl_and_es_API.xml
+
+$(intermediates)/main/marshal_generated.h: $(dispatch_deps)
+	$(call es-gen)
+
 GET_HASH_GEN := $(LOCAL_PATH)/main/get_hash_generator.py
 
 $(intermediates)/main/get_hash.h: PRIVATE_SCRIPT := $(MESA_PYTHON2) $(GET_HASH_GEN)
@@ -120,6 +123,17 @@ $(intermediates)/main/get_hash.h: PRIVATE_XML := -f $(glapi)/gl_and_es_API.xml
 $(intermediates)/main/get_hash.h: $(glapi)/gl_and_es_API.xml \
                $(LOCAL_PATH)/main/get_hash_params.py $(GET_HASH_GEN)
 	$(call es-gen)
+
+FORMAT_FALLBACK := $(LOCAL_PATH)/main/format_fallback.py
+format_fallback_deps := \
+	$(LOCAL_PATH)/main/formats.csv \
+	$(LOCAL_PATH)/main/format_parser.py \
+	$(FORMAT_FALLBACK)
+
+$(intermediates)/main/format_fallback.c: PRIVATE_SCRIPT := $(MESA_PYTHON2) $(FORMAT_FALLBACK)
+$(intermediates)/main/format_fallback.c: PRIVATE_XML :=
+$(intermediates)/main/format_fallback.c: $(format_fallback_deps)
+	$(call es-gen, $< /dev/stdout)
 
 FORMAT_INFO := $(LOCAL_PATH)/main/format_info.py
 format_info_deps := \

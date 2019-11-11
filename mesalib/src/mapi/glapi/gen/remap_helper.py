@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 
 # Copyright (C) 2009 Chia-I Wu <olv@0xlab.org>
 # All Rights Reserved.
@@ -23,6 +22,8 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 # FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 # IN THE SOFTWARE.
+
+from __future__ import print_function
 
 import argparse
 
@@ -67,23 +68,23 @@ class PrintGlRemap(gl_XML.gl_print_base):
 
 
     def printRealHeader(self):
-        print '#include "dispatch.h"'
-        print '#include "remap.h"'
-        print ''
+        print('#include "dispatch.h"')
+        print('#include "remap.h"')
+        print('')
         return
 
 
     def printBody(self, api):
         pool_indices = {}
 
-        print '/* this is internal to remap.c */'
-        print '#ifndef need_MESA_remap_table'
-        print '#error Only remap.c should include this file!'
-        print '#endif /* need_MESA_remap_table */'
-        print ''
+        print('/* this is internal to remap.c */')
+        print('#ifndef need_MESA_remap_table')
+        print('#error Only remap.c should include this file!')
+        print('#endif /* need_MESA_remap_table */')
+        print('')
 
-        print ''
-        print 'static const char _mesa_function_pool[] ='
+        print('')
+        print('static const char _mesa_function_pool[] =')
 
         # output string pool
         index = 0;
@@ -101,26 +102,26 @@ class PrintGlRemap(gl_XML.gl_print_base):
             else:
                 comments = "dynamic"
 
-            print '   /* _mesa_function_pool[%d]: %s (%s) */' \
-                            % (index, f.name, comments)
+            print('   /* _mesa_function_pool[%d]: %s (%s) */' \
+                            % (index, f.name, comments))
             for line in spec:
-                print '   "%s\\0"' % line
+                print('   "%s\\0"' % line)
                 index += len(line) + 1
-        print '   ;'
-        print ''
+        print('   ;')
+        print('')
 
-        print '/* these functions need to be remapped */'
-        print 'static const struct gl_function_pool_remap MESA_remap_table_functions[] = {'
+        print('/* these functions need to be remapped */')
+        print('static const struct gl_function_pool_remap MESA_remap_table_functions[] = {')
         # output all functions that need to be remapped
         # iterate by offsets so that they are sorted by remap indices
         for f in api.functionIterateByOffset():
             if not f.assign_offset:
                 continue
-            print '   { %5d, %s_remap_index },' \
-                            % (pool_indices[f], f.name)
-        print '   {    -1, -1 }'
-        print '};'
-        print ''
+            print('   { %5d, %s_remap_index },' \
+                            % (pool_indices[f], f.name))
+        print('   {    -1, -1 }')
+        print('};')
+        print('')
         return
 
 

@@ -32,6 +32,8 @@
 
 #define NIR_SEARCH_MAX_VARIABLES 16
 
+struct nir_builder;
+
 typedef enum {
    nir_search_value_expression,
    nir_search_value_variable,
@@ -103,17 +105,29 @@ typedef struct {
 
    nir_op opcode;
    const nir_search_value *srcs[4];
+
+   /** Optional condition fxn ptr
+    *
+    * This allows additional constraints on expression matching, it is
+    * typically used to match an expressions uses such as the number of times
+    * the expression is used, and whether its used by an if.
+    */
+   bool (*cond)(nir_alu_instr *instr);
 } nir_search_expression;
 
 NIR_DEFINE_CAST(nir_search_value_as_variable, nir_search_value,
-                nir_search_variable, value)
+                nir_search_variable, value,
+                type, nir_search_value_variable)
 NIR_DEFINE_CAST(nir_search_value_as_constant, nir_search_value,
-                nir_search_constant, value)
+                nir_search_constant, value,
+                type, nir_search_value_constant)
 NIR_DEFINE_CAST(nir_search_value_as_expression, nir_search_value,
-                nir_search_expression, value)
+                nir_search_expression, value,
+                type, nir_search_value_expression)
 
-nir_alu_instr *
-nir_replace_instr(nir_alu_instr *instr, const nir_search_expression *search,
-                  const nir_search_value *replace, void *mem_ctx);
+nir_ssa_def *
+nir_replace_instr(struct nir_builder *b, nir_alu_instr *instr,
+                  const nir_search_expression *search,
+                  const nir_search_value *replace);
 
 #endif /* _NIR_SEARCH_ */

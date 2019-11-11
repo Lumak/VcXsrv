@@ -211,7 +211,6 @@ typedef struct {
     const char *dev_ramdac;
     int dev_dacSpeeds[CONF_MAXDACSPEEDS];
     int dev_videoram;
-    unsigned long dev_bios_base;
     unsigned long dev_mem_base;
     unsigned long dev_io_base;
     const char *dev_clockchip;
@@ -337,7 +336,9 @@ typedef struct {
     GenericListRec list;
     char *identifier;
     char *driver;
+    char *modulepath;
     struct xorg_list match_driver;
+    XF86OptionPtr option_lst;
     char *comment;
 } XF86ConfOutputClassRec, *XF86ConfOutputClassPtr;
 
@@ -449,6 +450,7 @@ extern char *xf86openConfigDirFiles(const char *path, const char *cmdline,
 extern void xf86setBuiltinConfig(const char *config[]);
 extern XF86ConfigPtr xf86readConfigFile(void);
 extern void xf86closeConfigFile(void);
+extern XF86ConfigPtr xf86allocateConfig(void);
 extern void xf86freeConfig(XF86ConfigPtr p);
 extern int xf86writeConfigFile(const char *, XF86ConfigPtr);
 extern _X_EXPORT XF86ConfDevicePtr xf86findDevice(const char *ident,

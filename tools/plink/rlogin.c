@@ -9,54 +9,47 @@
 
 #include "putty.h"
 
-#ifndef FALSE
-#define FALSE 0
-#endif
-#ifndef TRUE
-#define TRUE 1
-#endif
-
 #define RLOGIN_MAX_BACKLOG 4096
 
-typedef struct rlogin_tag {
-    const struct plug_function_table *fn;
-    /* the above field _must_ be first in the structure */
-
-    Socket s;
-    int closed_on_socket_error;
+typedef struct Rlogin Rlogin;
+struct Rlogin {
+    Socket *s;
+    bool closed_on_socket_error;
     int bufsize;
-    int firstbyte;
-    int cansize;
+    bool firstbyte;
+    bool cansize;
     int term_width, term_height;
-    void *frontend;
+    Seat *seat;
+    LogContext *logctx;
 
     Conf *conf;
 
     /* In case we need to read a username from the terminal before starting */
     prompts_t *prompt;
-} *Rlogin;
 
-static void rlogin_size(void *handle, int width, int height);
+    Plug plug;
+    Backend backend;
+};
 
-static void c_write(Rlogin rlogin, char *buf, int len)
+static void c_write(Rlogin *rlogin, const void *buf, int len)
 {
-    int backlog = from_backend(rlogin->frontend, 0, buf, len);
+    int backlog = seat_stdout(rlogin->seat, buf, len);
     sk_set_frozen(rlogin->s, backlog > RLOGIN_MAX_BACKLOG);
 }
 
-static void rlogin_log(Plug plug, int type, SockAddr addr, int port,
+static void rlogin_log(Plug *plug, int type, SockAddr *addr, int port,
 		       const char *error_msg, int error_code)
 {
-    Rlogin rlogin = (Rlogin) plug;
-    backend_socket_log(rlogin->frontend, type, addr, port,
+    Rlogin *rlogin = container_of(plug, Rlogin, plug);
+    backend_socket_log(rlogin->seat, rlogin->logctx, type, addr, port,
                        error_msg, error_code,
                        rlogin->conf, !rlogin->firstbyte);
 }
 
-static int rlogin_closing(Plug plug, const char *error_msg, int error_code,
-			  int calling_back)
+static void rlogin_closing(Plug *plug, const char *error_msg, int error_code,
+			   bool calling_back)
 {
-    Rlogin rlogin = (Rlogin) plug;
+    Rlogin *rlogin = container_of(plug, Rlogin, plug);
 
     /*
      * We don't implement independent EOF in each direction for Telnet
@@ -68,28 +61,28 @@ static int rlogin_closing(Plug plug, const char *error_msg, int error_code,
         sk_close(rlogin->s);
         rlogin->s = NULL;
         if (error_msg)
-            rlogin->closed_on_socket_error = TRUE;
-	notify_remote_exit(rlogin->frontend);
+            rlogin->closed_on_socket_error = true;
+	seat_notify_remote_exit(rlogin->seat);
     }
     if (error_msg) {
 	/* A socket error has occurred. */
-	logevent(rlogin->frontend, error_msg);
-	connection_fatal(rlogin->frontend, "%s", error_msg);
+        logevent(rlogin->logctx, error_msg);
+        seat_connection_fatal(rlogin->seat, "%s", error_msg);
     }				       /* Otherwise, the remote side closed the connection normally. */
-    return 0;
 }
 
-static int rlogin_receive(Plug plug, int urgent, char *data, int len)
+static void rlogin_receive(Plug *plug, int urgent, char *data, int len)
 {
-    Rlogin rlogin = (Rlogin) plug;
+    Rlogin *rlogin = container_of(plug, Rlogin, plug);
     if (urgent == 2) {
 	char c;
 
 	c = *data++;
 	len--;
 	if (c == '\x80') {
-	    rlogin->cansize = 1;
-	    rlogin_size(rlogin, rlogin->term_width, rlogin->term_height);
+	    rlogin->cansize = true;
+            backend_size(&rlogin->backend,
+                         rlogin->term_width, rlogin->term_height);
         }
 	/*
 	 * We should flush everything (aka Telnet SYNCH) if we see
@@ -108,21 +101,20 @@ static int rlogin_receive(Plug plug, int urgent, char *data, int len)
 		data++;
 		len--;
 	    }
-	    rlogin->firstbyte = 0;
+	    rlogin->firstbyte = false;
 	}
 	if (len > 0)
             c_write(rlogin, data, len);
     }
-    return 1;
 }
 
-static void rlogin_sent(Plug plug, int bufsize)
+static void rlogin_sent(Plug *plug, int bufsize)
 {
-    Rlogin rlogin = (Rlogin) plug;
+    Rlogin *rlogin = container_of(plug, Rlogin, plug);
     rlogin->bufsize = bufsize;
 }
 
-static void rlogin_startup(Rlogin rlogin, const char *ruser)
+static void rlogin_startup(Rlogin *rlogin, const char *ruser)
 {
     char z = 0;
     char *p;
@@ -143,6 +135,13 @@ static void rlogin_startup(Rlogin rlogin, const char *ruser)
     rlogin->prompt = NULL;
 }
 
+static const PlugVtable Rlogin_plugvt = {
+    rlogin_log,
+    rlogin_closing,
+    rlogin_receive,
+    rlogin_sent
+};
+
 /*
  * Called to set up the rlogin connection.
  * 
@@ -151,43 +150,39 @@ static void rlogin_startup(Rlogin rlogin, const char *ruser)
  * Also places the canonical host name into `realhost'. It must be
  * freed by the caller.
  */
-static const char *rlogin_init(void *frontend_handle, void **backend_handle,
-			       Conf *conf,
+static const char *rlogin_init(Seat *seat, Backend **backend_handle,
+                               LogContext *logctx, Conf *conf,
 			       const char *host, int port, char **realhost,
-			       int nodelay, int keepalive)
+			       bool nodelay, bool keepalive)
 {
-    static const struct plug_function_table fn_table = {
-	rlogin_log,
-	rlogin_closing,
-	rlogin_receive,
-	rlogin_sent
-    };
-    SockAddr addr;
+    SockAddr *addr;
     const char *err;
-    Rlogin rlogin;
+    Rlogin *rlogin;
     char *ruser;
     int addressfamily;
     char *loghost;
 
-    rlogin = snew(struct rlogin_tag);
-    rlogin->fn = &fn_table;
+    rlogin = snew(Rlogin);
+    rlogin->plug.vt = &Rlogin_plugvt;
+    rlogin->backend.vt = &rlogin_backend;
     rlogin->s = NULL;
-    rlogin->closed_on_socket_error = FALSE;
-    rlogin->frontend = frontend_handle;
+    rlogin->closed_on_socket_error = false;
+    rlogin->seat = seat;
+    rlogin->logctx = logctx;
     rlogin->term_width = conf_get_int(conf, CONF_width);
     rlogin->term_height = conf_get_int(conf, CONF_height);
-    rlogin->firstbyte = 1;
-    rlogin->cansize = 0;
+    rlogin->firstbyte = true;
+    rlogin->cansize = false;
     rlogin->prompt = NULL;
     rlogin->conf = conf_copy(conf);
-    *backend_handle = rlogin;
+    *backend_handle = &rlogin->backend;
 
     addressfamily = conf_get_int(conf, CONF_addressfamily);
     /*
      * Try to find host.
      */
     addr = name_lookup(host, port, realhost, conf, addressfamily,
-                       rlogin->frontend, "rlogin connection");
+                       rlogin->logctx, "rlogin connection");
     if ((err = sk_addr_error(addr)) != NULL) {
 	sk_addr_free(addr);
 	return err;
@@ -199,8 +194,8 @@ static const char *rlogin_init(void *frontend_handle, void **backend_handle,
     /*
      * Open socket.
      */
-    rlogin->s = new_connection(addr, *realhost, port, 1, 0,
-			       nodelay, keepalive, (Plug) rlogin, conf);
+    rlogin->s = new_connection(addr, *realhost, port, true, false,
+			       nodelay, keepalive, &rlogin->plug, conf);
     if ((err = sk_socket_error(rlogin->s)) != NULL)
 	return err;
 
@@ -228,11 +223,11 @@ static const char *rlogin_init(void *frontend_handle, void **backend_handle,
     } else {
         int ret;
 
-        rlogin->prompt = new_prompts(rlogin->frontend);
-        rlogin->prompt->to_server = TRUE;
+        rlogin->prompt = new_prompts();
+        rlogin->prompt->to_server = true;
         rlogin->prompt->name = dupstr("Rlogin login name");
-        add_prompt(rlogin->prompt, dupstr("rlogin username: "), TRUE); 
-        ret = get_userpass_input(rlogin->prompt, NULL, 0);
+        add_prompt(rlogin->prompt, dupstr("rlogin username: "), true); 
+        ret = seat_get_userpass_input(rlogin->seat, rlogin->prompt, NULL);
         if (ret >= 0) {
             rlogin_startup(rlogin, rlogin->prompt->prompts[0]->result);
         }
@@ -241,9 +236,9 @@ static const char *rlogin_init(void *frontend_handle, void **backend_handle,
     return NULL;
 }
 
-static void rlogin_free(void *handle)
+static void rlogin_free(Backend *be)
 {
-    Rlogin rlogin = (Rlogin) handle;
+    Rlogin *rlogin = container_of(be, Rlogin, backend);
 
     if (rlogin->prompt)
         free_prompts(rlogin->prompt);
@@ -256,35 +251,48 @@ static void rlogin_free(void *handle)
 /*
  * Stub routine (we don't have any need to reconfigure this backend).
  */
-static void rlogin_reconfig(void *handle, Conf *conf)
+static void rlogin_reconfig(Backend *be, Conf *conf)
 {
 }
 
 /*
  * Called to send data down the rlogin connection.
  */
-static int rlogin_send(void *handle, const char *buf, int len)
+static int rlogin_send(Backend *be, const char *buf, int len)
 {
-    Rlogin rlogin = (Rlogin) handle;
+    Rlogin *rlogin = container_of(be, Rlogin, backend);
+    bufchain bc;
 
     if (rlogin->s == NULL)
 	return 0;
+
+    bufchain_init(&bc);
+    bufchain_add(&bc, buf, len);
 
     if (rlogin->prompt) {
         /*
          * We're still prompting for a username, and aren't talking
          * directly to the network connection yet.
          */
-        int ret = get_userpass_input(rlogin->prompt,
-                                     (unsigned char *)buf, len);
+        int ret = seat_get_userpass_input(rlogin->seat, rlogin->prompt, &bc);
         if (ret >= 0) {
             rlogin_startup(rlogin, rlogin->prompt->prompts[0]->result);
             /* that nulls out rlogin->prompt, so then we'll start sending
              * data down the wire in the obvious way */
         }
-    } else {
-        rlogin->bufsize = sk_write(rlogin->s, buf, len);
     }
+
+    if (!rlogin->prompt) {
+        while (bufchain_size(&bc) > 0) {
+            void *data;
+            int len;
+            bufchain_prefix(&bc, &data, &len);
+            rlogin->bufsize = sk_write(rlogin->s, data, len);
+            bufchain_consume(&bc, len);
+        }
+    }
+
+    bufchain_clear(&bc);
 
     return rlogin->bufsize;
 }
@@ -292,18 +300,18 @@ static int rlogin_send(void *handle, const char *buf, int len)
 /*
  * Called to query the current socket sendability status.
  */
-static int rlogin_sendbuffer(void *handle)
+static int rlogin_sendbuffer(Backend *be)
 {
-    Rlogin rlogin = (Rlogin) handle;
+    Rlogin *rlogin = container_of(be, Rlogin, backend);
     return rlogin->bufsize;
 }
 
 /*
  * Called to set the size of the window
  */
-static void rlogin_size(void *handle, int width, int height)
+static void rlogin_size(Backend *be, int width, int height)
 {
-    Rlogin rlogin = (Rlogin) handle;
+    Rlogin *rlogin = container_of(be, Rlogin, backend);
     char b[12] = { '\xFF', '\xFF', 0x73, 0x73, 0, 0, 0, 0, 0, 0, 0, 0 };
 
     rlogin->term_width = width;
@@ -323,7 +331,7 @@ static void rlogin_size(void *handle, int width, int height)
 /*
  * Send rlogin special codes.
  */
-static void rlogin_special(void *handle, Telnet_Special code)
+static void rlogin_special(Backend *be, SessionSpecialCode code, int arg)
 {
     /* Do nothing! */
     return;
@@ -333,48 +341,43 @@ static void rlogin_special(void *handle, Telnet_Special code)
  * Return a list of the special codes that make sense in this
  * protocol.
  */
-static const struct telnet_special *rlogin_get_specials(void *handle)
+static const SessionSpecial *rlogin_get_specials(Backend *be)
 {
     return NULL;
 }
 
-static int rlogin_connected(void *handle)
+static bool rlogin_connected(Backend *be)
 {
-    Rlogin rlogin = (Rlogin) handle;
+    Rlogin *rlogin = container_of(be, Rlogin, backend);
     return rlogin->s != NULL;
 }
 
-static int rlogin_sendok(void *handle)
+static bool rlogin_sendok(Backend *be)
 {
-    /* Rlogin rlogin = (Rlogin) handle; */
-    return 1;
+    /* Rlogin *rlogin = container_of(be, Rlogin, backend); */
+    return true;
 }
 
-static void rlogin_unthrottle(void *handle, int backlog)
+static void rlogin_unthrottle(Backend *be, int backlog)
 {
-    Rlogin rlogin = (Rlogin) handle;
+    Rlogin *rlogin = container_of(be, Rlogin, backend);
     sk_set_frozen(rlogin->s, backlog > RLOGIN_MAX_BACKLOG);
 }
 
-static int rlogin_ldisc(void *handle, int option)
+static bool rlogin_ldisc(Backend *be, int option)
 {
-    /* Rlogin rlogin = (Rlogin) handle; */
-    return 0;
+    /* Rlogin *rlogin = container_of(be, Rlogin, backend); */
+    return false;
 }
 
-static void rlogin_provide_ldisc(void *handle, void *ldisc)
+static void rlogin_provide_ldisc(Backend *be, Ldisc *ldisc)
 {
     /* This is a stub. */
 }
 
-static void rlogin_provide_logctx(void *handle, void *logctx)
+static int rlogin_exitcode(Backend *be)
 {
-    /* This is a stub. */
-}
-
-static int rlogin_exitcode(void *handle)
-{
-    Rlogin rlogin = (Rlogin) handle;
+    Rlogin *rlogin = container_of(be, Rlogin, backend);
     if (rlogin->s != NULL)
         return -1;                     /* still connected */
     else if (rlogin->closed_on_socket_error)
@@ -387,12 +390,12 @@ static int rlogin_exitcode(void *handle)
 /*
  * cfg_info for rlogin does nothing at all.
  */
-static int rlogin_cfg_info(void *handle)
+static int rlogin_cfg_info(Backend *be)
 {
     return 0;
 }
 
-Backend rlogin_backend = {
+const struct BackendVtable rlogin_backend = {
     rlogin_init,
     rlogin_free,
     rlogin_reconfig,
@@ -406,7 +409,6 @@ Backend rlogin_backend = {
     rlogin_sendok,
     rlogin_ldisc,
     rlogin_provide_ldisc,
-    rlogin_provide_logctx,
     rlogin_unthrottle,
     rlogin_cfg_info,
     NULL /* test_for_upstream */,

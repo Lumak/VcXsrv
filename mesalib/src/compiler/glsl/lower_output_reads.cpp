@@ -23,7 +23,7 @@
  */
 
 #include "ir.h"
-#include "program/hash_table.h"
+#include "util/hash_table.h"
 
 /**
  * \file lower_output_reads.cpp
@@ -46,8 +46,6 @@ protected:
     * (ir_var_shader_out mode) to the new temporaries to be used instead.
     */
    hash_table *replacements;
-
-   void *mem_ctx;
 
    unsigned stage;
 public:
@@ -74,39 +72,36 @@ static unsigned
 hash_table_var_hash(const void *key)
 {
    const ir_variable * var = static_cast<const ir_variable *>(key);
-   return hash_table_string_hash(var->name);
+   return _mesa_key_hash_string(var->name);
 }
 
 output_read_remover::output_read_remover(unsigned stage)
 {
    this->stage = stage;
-   mem_ctx = ralloc_context(NULL);
-   replacements =
-      hash_table_ctor(0, hash_table_var_hash, hash_table_pointer_compare);
+   replacements = _mesa_hash_table_create(NULL, hash_table_var_hash,
+                                          _mesa_key_pointer_equal);
 }
 
 output_read_remover::~output_read_remover()
 {
-   hash_table_dtor(replacements);
-   ralloc_free(mem_ctx);
+   _mesa_hash_table_destroy(replacements, NULL);
 }
 
 ir_visitor_status
 output_read_remover::visit(ir_dereference_variable *ir)
 {
-   if (ir->var->data.mode != ir_var_shader_out)
-      return visit_continue;
-   if (stage == MESA_SHADER_TESS_CTRL)
+   if (ir->var->data.mode != ir_var_shader_out || ir->var->data.fb_fetch_output)
       return visit_continue;
 
-   ir_variable *temp = (ir_variable *) hash_table_find(replacements, ir->var);
+   hash_entry *entry = _mesa_hash_table_search(replacements, ir->var);
+   ir_variable *temp = entry ? (ir_variable *) entry->data : NULL;
 
    /* If we don't have an existing temporary, create one. */
    if (temp == NULL) {
       void *var_ctx = ralloc_parent(ir->var);
       temp = new(var_ctx) ir_variable(ir->var->type, ir->var->name,
                                       ir_var_temporary);
-      hash_table_insert(replacements, temp, ir->var);
+      _mesa_hash_table_insert(replacements, ir->var, temp);
       ir->var->insert_after(temp);
    }
 
@@ -156,7 +151,6 @@ ir_visitor_status
 output_read_remover::visit_leave(ir_emit_vertex *ir)
 {
    hash_table_call_foreach(replacements, emit_return_copy, ir);
-   hash_table_clear(replacements);
    return visit_continue;
 }
 
@@ -173,6 +167,12 @@ output_read_remover::visit_leave(ir_function_signature *sig)
 void
 lower_output_reads(unsigned stage, exec_list *instructions)
 {
+   /* Due to the possible interactions between multiple tessellation control
+    * shader invocations, we leave output variables as-is.
+    */
+   if (stage == MESA_SHADER_TESS_CTRL)
+      return;
+
    output_read_remover v(stage);
    visit_list_elements(&v, instructions);
 }

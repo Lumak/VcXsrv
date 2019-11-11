@@ -81,7 +81,6 @@ Bool g_fswrastwgl = FALSE;
 Bool g_fHostInTitle = TRUE;
 pthread_mutex_t g_pmTerminating = PTHREAD_MUTEX_INITIALIZER;
 
-#ifdef XWIN_CLIPBOARD
 /*
  * Wrapped DIX functions
  */
@@ -100,11 +99,11 @@ HWND g_hwndClipboard = NULL;
 void *g_pClipboardDisplay = NULL;
 Window g_iClipboardWindow = None;
 Atom g_atomLastOwnedSelection = None;
-#endif
 
 const char WIN_WINDOW_PROP[]=     "vcxsrv_window_prop_rl";
 const char WIN_WID_PROP[]=        "vcxsrv_wid_prop_rl";
 const char WIN_NEEDMANAGE_PROP[]= "vcxsrv_override_redirect_prop_rl";
+const char WIN_STATE_PROP[]=      "vcxsrv_state_prop_rl";
 const char WIN_SCR_PROP[]=        "vcxsrv_screen_prop_rl";
 
 /*
@@ -116,10 +115,8 @@ void
 winInitializeGlobals(void)
 {
     g_dwCurrentThreadID = GetCurrentThreadId();
-#ifdef XWIN_CLIPBOARD
     g_iClipboardWindow = None;
     g_pClipboardDisplay = NULL;
     g_atomLastOwnedSelection = None;
     g_hwndClipboard = NULL;
-#endif
 }

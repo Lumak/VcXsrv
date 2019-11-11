@@ -33,6 +33,7 @@
 
 #include <inttypes.h>  /* for PRId64 macro */
 
+#include "main/errors.h"
 #include "main/imports.h"
 #include "main/mtypes.h"
 #include "main/arrayobj.h"
@@ -40,6 +41,7 @@
 
 #include "st_context.h"
 #include "st_cb_bufferobjects.h"
+#include "st_cb_memoryobjects.h"
 #include "st_debug.h"
 
 #include "pipe/p_context.h"
@@ -96,9 +98,9 @@ st_bufferobj_free(struct gl_context *ctx, struct gl_buffer_object *obj)
  */
 static void
 st_bufferobj_subdata(struct gl_context *ctx,
-		     GLintptrARB offset,
-		     GLsizeiptrARB size,
-		     const void * data, struct gl_buffer_object *obj)
+                     GLintptrARB offset,
+                     GLsizeiptrARB size,
+                     const void * data, struct gl_buffer_object *obj)
 {
    struct st_buffer_object *st_obj = st_buffer_object(obj);
 
@@ -130,8 +132,8 @@ st_bufferobj_subdata(struct gl_context *ctx,
     * buffer directly.
     */
    pipe_buffer_write(st_context(ctx)->pipe,
-		     st_obj->buffer,
-		     offset, size, data);
+                     st_obj->buffer,
+                     offset, size, data);
 }
 
 
@@ -165,26 +167,121 @@ st_bufferobj_get_subdata(struct gl_context *ctx,
 
 
 /**
- * Allocate space for and store data in a buffer object.  Any data that was
- * previously stored in the buffer object is lost.  If data is NULL,
- * memory will be allocated, but no copy will occur.
- * Called via ctx->Driver.BufferData().
- * \return GL_TRUE for success, GL_FALSE if out of memory
+ * Return bitmask of PIPE_BIND_x flags corresponding a GL buffer target.
  */
-static GLboolean
-st_bufferobj_data(struct gl_context *ctx,
-		  GLenum target,
-		  GLsizeiptrARB size,
-		  const void * data,
-		  GLenum usage,
-                  GLbitfield storageFlags,
-		  struct gl_buffer_object *obj)
+static unsigned
+buffer_target_to_bind_flags(GLenum target)
+{
+   switch (target) {
+   case GL_PIXEL_PACK_BUFFER_ARB:
+   case GL_PIXEL_UNPACK_BUFFER_ARB:
+      return PIPE_BIND_RENDER_TARGET | PIPE_BIND_SAMPLER_VIEW;
+   case GL_ARRAY_BUFFER_ARB:
+      return PIPE_BIND_VERTEX_BUFFER;
+   case GL_ELEMENT_ARRAY_BUFFER_ARB:
+      return PIPE_BIND_INDEX_BUFFER;
+   case GL_TEXTURE_BUFFER:
+      return PIPE_BIND_SAMPLER_VIEW;
+   case GL_TRANSFORM_FEEDBACK_BUFFER:
+      return PIPE_BIND_STREAM_OUTPUT;
+   case GL_UNIFORM_BUFFER:
+      return PIPE_BIND_CONSTANT_BUFFER;
+   case GL_DRAW_INDIRECT_BUFFER:
+   case GL_PARAMETER_BUFFER_ARB:
+      return PIPE_BIND_COMMAND_ARGS_BUFFER;
+   case GL_ATOMIC_COUNTER_BUFFER:
+   case GL_SHADER_STORAGE_BUFFER:
+      return PIPE_BIND_SHADER_BUFFER;
+   case GL_QUERY_BUFFER:
+      return PIPE_BIND_QUERY_BUFFER;
+   default:
+      return 0;
+   }
+}
+
+
+/**
+ * Return bitmask of PIPE_RESOURCE_x flags corresponding to GL_MAP_x flags.
+ */
+static unsigned
+storage_flags_to_buffer_flags(GLbitfield storageFlags)
+{
+   unsigned flags = 0;
+   if (storageFlags & GL_MAP_PERSISTENT_BIT)
+      flags |= PIPE_RESOURCE_FLAG_MAP_PERSISTENT;
+   if (storageFlags & GL_MAP_COHERENT_BIT)
+      flags |= PIPE_RESOURCE_FLAG_MAP_COHERENT;
+   if (storageFlags & GL_SPARSE_STORAGE_BIT_ARB)
+      flags |= PIPE_RESOURCE_FLAG_SPARSE;
+   return flags;
+}
+
+
+/**
+ * From a buffer object's target, immutability flag, storage flags and
+ * usage hint, return a pipe_resource_usage value (PIPE_USAGE_DYNAMIC,
+ * STREAM, etc).
+ */
+static const enum pipe_resource_usage
+buffer_usage(GLenum target, GLboolean immutable,
+             GLbitfield storageFlags, GLenum usage)
+{
+   if (immutable) {
+      /* BufferStorage */
+      if (storageFlags & GL_CLIENT_STORAGE_BIT) {
+         if (storageFlags & GL_MAP_READ_BIT)
+            return PIPE_USAGE_STAGING;
+         else
+            return PIPE_USAGE_STREAM;
+      } else {
+         return PIPE_USAGE_DEFAULT;
+      }
+   }
+   else {
+      /* BufferData */
+      switch (usage) {
+      case GL_DYNAMIC_DRAW:
+      case GL_DYNAMIC_COPY:
+         return PIPE_USAGE_DYNAMIC;
+      case GL_STREAM_DRAW:
+      case GL_STREAM_COPY:
+         /* XXX: Remove this test and fall-through when we have PBO unpacking
+          * acceleration. Right now, PBO unpacking is done by the CPU, so we
+          * have to make sure CPU reads are fast.
+          */
+         if (target != GL_PIXEL_UNPACK_BUFFER_ARB) {
+            return PIPE_USAGE_STREAM;
+         }
+         /* fall through */
+      case GL_STATIC_READ:
+      case GL_DYNAMIC_READ:
+      case GL_STREAM_READ:
+         return PIPE_USAGE_STAGING;
+      case GL_STATIC_DRAW:
+      case GL_STATIC_COPY:
+      default:
+         return PIPE_USAGE_DEFAULT;
+      }
+   }
+}
+
+
+static ALWAYS_INLINE GLboolean
+bufferobj_data(struct gl_context *ctx,
+               GLenum target,
+               GLsizeiptrARB size,
+               const void *data,
+               struct gl_memory_object *memObj,
+               GLuint64 offset,
+               GLenum usage,
+               GLbitfield storageFlags,
+               struct gl_buffer_object *obj)
 {
    struct st_context *st = st_context(ctx);
    struct pipe_context *pipe = st->pipe;
    struct pipe_screen *screen = pipe->screen;
    struct st_buffer_object *st_obj = st_buffer_object(obj);
-   unsigned bind, pipe_usage, pipe_flags = 0;
+   struct st_memory_object *st_mem_obj = st_memory_object(memObj);
 
    if (target != GL_EXTERNAL_VIRTUAL_MEMORY_BUFFER_AMD &&
        size && st_obj->buffer &&
@@ -210,95 +307,13 @@ st_bufferobj_data(struct gl_context *ctx,
    st_obj->Base.Usage = usage;
    st_obj->Base.StorageFlags = storageFlags;
 
-   switch (target) {
-   case GL_PIXEL_PACK_BUFFER_ARB:
-   case GL_PIXEL_UNPACK_BUFFER_ARB:
-      bind = PIPE_BIND_RENDER_TARGET | PIPE_BIND_SAMPLER_VIEW;
-      break;
-   case GL_ARRAY_BUFFER_ARB:
-      bind = PIPE_BIND_VERTEX_BUFFER;
-      break;
-   case GL_ELEMENT_ARRAY_BUFFER_ARB:
-      bind = PIPE_BIND_INDEX_BUFFER;
-      break;
-   case GL_TEXTURE_BUFFER:
-      bind = PIPE_BIND_SAMPLER_VIEW;
-      break;
-   case GL_TRANSFORM_FEEDBACK_BUFFER:
-      bind = PIPE_BIND_STREAM_OUTPUT;
-      break;
-   case GL_UNIFORM_BUFFER:
-      bind = PIPE_BIND_CONSTANT_BUFFER;
-      break;
-   case GL_DRAW_INDIRECT_BUFFER:
-   case GL_PARAMETER_BUFFER_ARB:
-      bind = PIPE_BIND_COMMAND_ARGS_BUFFER;
-      break;
-   case GL_ATOMIC_COUNTER_BUFFER:
-   case GL_SHADER_STORAGE_BUFFER:
-      bind = PIPE_BIND_SHADER_BUFFER;
-      break;
-   case GL_QUERY_BUFFER:
-      bind = PIPE_BIND_QUERY_BUFFER;
-      break;
-   default:
-      bind = 0;
-   }
-
-   /* Set usage. */
-   if (st_obj->Base.Immutable) {
-      /* BufferStorage */
-      if (storageFlags & GL_CLIENT_STORAGE_BIT) {
-         if (storageFlags & GL_MAP_READ_BIT)
-            pipe_usage = PIPE_USAGE_STAGING;
-         else
-            pipe_usage = PIPE_USAGE_STREAM;
-      } else {
-         pipe_usage = PIPE_USAGE_DEFAULT;
-      }
-   }
-   else {
-      /* BufferData */
-      switch (usage) {
-      case GL_STATIC_DRAW:
-      case GL_STATIC_COPY:
-      default:
-	 pipe_usage = PIPE_USAGE_DEFAULT;
-         break;
-      case GL_DYNAMIC_DRAW:
-      case GL_DYNAMIC_COPY:
-         pipe_usage = PIPE_USAGE_DYNAMIC;
-         break;
-      case GL_STREAM_DRAW:
-      case GL_STREAM_COPY:
-         /* XXX: Remove this test and fall-through when we have PBO unpacking
-          * acceleration. Right now, PBO unpacking is done by the CPU, so we
-          * have to make sure CPU reads are fast.
-          */
-         if (target != GL_PIXEL_UNPACK_BUFFER_ARB) {
-            pipe_usage = PIPE_USAGE_STREAM;
-            break;
-         }
-         /* fall through */
-      case GL_STATIC_READ:
-      case GL_DYNAMIC_READ:
-      case GL_STREAM_READ:
-         pipe_usage = PIPE_USAGE_STAGING;
-         break;
-      }
-   }
-
-   /* Set flags. */
-   if (storageFlags & GL_MAP_PERSISTENT_BIT)
-      pipe_flags |= PIPE_RESOURCE_FLAG_MAP_PERSISTENT;
-   if (storageFlags & GL_MAP_COHERENT_BIT)
-      pipe_flags |= PIPE_RESOURCE_FLAG_MAP_COHERENT;
-
    pipe_resource_reference( &st_obj->buffer, NULL );
+
+   const unsigned bindings = buffer_target_to_bind_flags(target);
 
    if (ST_DEBUG & DEBUG_BUFFER) {
       debug_printf("Create buffer size %" PRId64 " bind 0x%x\n",
-                   (int64_t) size, bind);
+                   (int64_t) size, bindings);
    }
 
    if (size != 0) {
@@ -307,15 +322,21 @@ st_bufferobj_data(struct gl_context *ctx,
       memset(&buffer, 0, sizeof buffer);
       buffer.target = PIPE_BUFFER;
       buffer.format = PIPE_FORMAT_R8_UNORM; /* want TYPELESS or similar */
-      buffer.bind = bind;
-      buffer.usage = pipe_usage;
-      buffer.flags = pipe_flags;
+      buffer.bind = bindings;
+      buffer.usage =
+         buffer_usage(target, st_obj->Base.Immutable, storageFlags, usage);
+      buffer.flags = storage_flags_to_buffer_flags(storageFlags);
       buffer.width0 = size;
       buffer.height0 = 1;
       buffer.depth0 = 1;
       buffer.array_size = 1;
 
-      if (target == GL_EXTERNAL_VIRTUAL_MEMORY_BUFFER_AMD) {
+      if (st_mem_obj) {
+         st_obj->buffer = screen->resource_from_memobj(screen, &buffer,
+                                                       st_mem_obj->memory,
+                                                       offset);
+      }
+      else if (target == GL_EXTERNAL_VIRTUAL_MEMORY_BUFFER_AMD) {
          st_obj->buffer =
             screen->resource_from_user_memory(screen, &buffer, (void*)data);
       }
@@ -345,11 +366,41 @@ st_bufferobj_data(struct gl_context *ctx,
    if (st_obj->Base.UsageHistory & USAGE_TEXTURE_BUFFER)
       ctx->NewDriverState |= ST_NEW_SAMPLER_VIEWS | ST_NEW_IMAGE_UNITS;
    if (st_obj->Base.UsageHistory & USAGE_ATOMIC_COUNTER_BUFFER)
-      ctx->NewDriverState |= ST_NEW_ATOMIC_BUFFER;
+      ctx->NewDriverState |= ctx->DriverFlags.NewAtomicBuffer;
 
    return GL_TRUE;
 }
 
+/**
+ * Allocate space for and store data in a buffer object.  Any data that was
+ * previously stored in the buffer object is lost.  If data is NULL,
+ * memory will be allocated, but no copy will occur.
+ * Called via ctx->Driver.BufferData().
+ * \return GL_TRUE for success, GL_FALSE if out of memory
+ */
+static GLboolean
+st_bufferobj_data(struct gl_context *ctx,
+                  GLenum target,
+                  GLsizeiptrARB size,
+                  const void *data,
+                  GLenum usage,
+                  GLbitfield storageFlags,
+                  struct gl_buffer_object *obj)
+{
+   return bufferobj_data(ctx, target, size, data, NULL, 0, usage, storageFlags, obj);
+}
+
+static GLboolean
+st_bufferobj_data_mem(struct gl_context *ctx,
+                      GLenum target,
+                      GLsizeiptrARB size,
+                      struct gl_memory_object *memObj,
+                      GLuint64 offset,
+                      GLenum usage,
+                      struct gl_buffer_object *bufObj)
+{
+   return bufferobj_data(ctx, target, size, NULL, memObj, offset, usage, 0, bufObj);
+}
 
 /**
  * Called via glInvalidateBuffer(Sub)Data.
@@ -377,17 +428,13 @@ st_bufferobj_invalidate(struct gl_context *ctx,
 
 
 /**
- * Called via glMapBufferRange().
+ * Convert GLbitfield of GL_MAP_x flags to gallium pipe_transfer_usage flags.
+ * \param wholeBuffer  is the whole buffer being mapped?
  */
-static void *
-st_bufferobj_map_range(struct gl_context *ctx,
-                       GLintptr offset, GLsizeiptr length, GLbitfield access,
-                       struct gl_buffer_object *obj,
-                       gl_map_buffer_index index)
+enum pipe_transfer_usage
+st_access_flags_to_transfer_flags(GLbitfield access, bool wholeBuffer)
 {
-   struct pipe_context *pipe = st_context(ctx)->pipe;
-   struct st_buffer_object *st_obj = st_buffer_object(obj);
-   enum pipe_transfer_usage flags = 0x0;
+   enum pipe_transfer_usage flags = 0;
 
    if (access & GL_MAP_WRITE_BIT)
       flags |= PIPE_TRANSFER_WRITE;
@@ -402,7 +449,7 @@ st_bufferobj_map_range(struct gl_context *ctx,
       flags |= PIPE_TRANSFER_DISCARD_WHOLE_RESOURCE;
    }
    else if (access & GL_MAP_INVALIDATE_RANGE_BIT) {
-      if (offset == 0 && length == obj->Size)
+      if (wholeBuffer)
          flags |= PIPE_TRANSFER_DISCARD_WHOLE_RESOURCE;
       else
          flags |= PIPE_TRANSFER_DISCARD_RANGE;
@@ -418,21 +465,41 @@ st_bufferobj_map_range(struct gl_context *ctx,
       flags |= PIPE_TRANSFER_COHERENT;
 
    /* ... other flags ...
-    */
+   */
 
    if (access & MESA_MAP_NOWAIT_BIT)
       flags |= PIPE_TRANSFER_DONTBLOCK;
+
+   return flags;
+}
+
+
+/**
+ * Called via glMapBufferRange().
+ */
+static void *
+st_bufferobj_map_range(struct gl_context *ctx,
+                       GLintptr offset, GLsizeiptr length, GLbitfield access,
+                       struct gl_buffer_object *obj,
+                       gl_map_buffer_index index)
+{
+   struct pipe_context *pipe = st_context(ctx)->pipe;
+   struct st_buffer_object *st_obj = st_buffer_object(obj);
 
    assert(offset >= 0);
    assert(length >= 0);
    assert(offset < obj->Size);
    assert(offset + length <= obj->Size);
 
+   const enum pipe_transfer_usage transfer_flags =
+      st_access_flags_to_transfer_flags(access,
+                                        offset == 0 && length == obj->Size);
+
    obj->Mappings[index].Pointer = pipe_buffer_map_range(pipe,
-                                        st_obj->buffer,
-                                        offset, length,
-                                        flags,
-                                        &st_obj->transfer[index]);
+                                                        st_obj->buffer,
+                                                        offset, length,
+                                                        transfer_flags,
+                                                        &st_obj->transfer[index]);
    if (obj->Mappings[index].Pointer) {
       obj->Mappings[index].Offset = offset;
       obj->Mappings[index].Length = length;
@@ -546,30 +613,32 @@ st_clear_buffer_subdata(struct gl_context *ctx,
                       clearValue, clearValueSize);
 }
 
-
-/* TODO: if buffer wasn't created with appropriate usage flags, need
- * to recreate it now and copy contents -- or possibly create a
- * gallium entrypoint to extend the usage flags and let the driver
- * decide if a copy is necessary.
- */
-void
-st_bufferobj_validate_usage(struct st_context *st,
-			    struct st_buffer_object *obj,
-			    unsigned usage)
+static void
+st_bufferobj_page_commitment(struct gl_context *ctx,
+                             struct gl_buffer_object *bufferObj,
+                             GLintptr offset, GLsizeiptr size,
+                             GLboolean commit)
 {
-}
+   struct pipe_context *pipe = st_context(ctx)->pipe;
+   struct st_buffer_object *buf = st_buffer_object(bufferObj);
+   struct pipe_box box;
 
+   u_box_1d(offset, size, &box);
+
+   if (!pipe->resource_commit(pipe, buf->buffer, 0, &box, commit)) {
+      _mesa_error(ctx, GL_OUT_OF_MEMORY, "glBufferPageCommitmentARB(out of memory)");
+      return;
+   }
+}
 
 void
 st_init_bufferobject_functions(struct pipe_screen *screen,
                                struct dd_function_table *functions)
 {
-   /* plug in default driver fallbacks (such as for ClearBufferSubData) */
-   _mesa_init_buffer_object_functions(functions);
-
    functions->NewBufferObject = st_bufferobj_alloc;
    functions->DeleteBuffer = st_bufferobj_free;
    functions->BufferData = st_bufferobj_data;
+   functions->BufferDataMem = st_bufferobj_data_mem;
    functions->BufferSubData = st_bufferobj_subdata;
    functions->GetBufferSubData = st_bufferobj_get_subdata;
    functions->MapBufferRange = st_bufferobj_map_range;
@@ -577,6 +646,7 @@ st_init_bufferobject_functions(struct pipe_screen *screen,
    functions->UnmapBuffer = st_bufferobj_unmap;
    functions->CopyBufferSubData = st_copy_buffer_subdata;
    functions->ClearBufferSubData = st_clear_buffer_subdata;
+   functions->BufferPageCommitment = st_bufferobj_page_commitment;
 
    if (screen->get_param(screen, PIPE_CAP_INVALIDATE_BUFFER))
       functions->InvalidateBufferSubData = st_bufferobj_invalidate;

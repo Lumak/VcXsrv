@@ -37,9 +37,7 @@
  * Local function prototypes
  */
 
-#ifdef XWIN_CLIPBOARD
 int winProcEstablishConnection(ClientPtr /* client */ );
-#endif
 
 /*
  * Local global declarations
@@ -47,21 +45,6 @@ int winProcEstablishConnection(ClientPtr /* client */ );
 
 DeviceIntPtr g_pwinPointer;
 DeviceIntPtr g_pwinKeyboard;
-
-/* Called from dix/devices.c */
-/*
- * All of our keys generate up and down transition notifications,
- * so all of our keys can be used as modifiers.
- *
- * An example of a modifier is mapping the A key to the Control key.
- * A has to be a legal modifier.  I think.
- */
-
-Bool
-LegalModifier(unsigned int uiKey, DeviceIntPtr pDevice)
-{
-    return TRUE;
-}
 
 /* Called from dix/dispatch.c */
 /*
@@ -100,7 +83,6 @@ InitInput(int argc, char *argv[])
   int rc;
     winDebug("InitInput\n");
 
-#ifdef XWIN_CLIPBOARD
     /*
      * Wrap some functions at every generation of the server.
      */
@@ -108,7 +90,6 @@ InitInput(int argc, char *argv[])
         winProcEstablishConnectionOrig = InitialVector[2];
         InitialVector[2] = winProcEstablishConnection;
     }
-#endif
 
     if (AllocDevicePair(serverClient, "Windows",
                         &g_pwinPointer, &g_pwinKeyboard,

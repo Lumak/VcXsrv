@@ -53,10 +53,7 @@
 #  endif
 
 
-#if defined(__CYGWIN__) || defined(__MINGW32__) || defined(GLX_USE_APPLEGL)
-#  undef HAVE_ALIAS
-#endif
-#ifdef HAVE_ALIAS
+#ifdef HAVE_FUNC_ATTRIBUTE_ALIAS
 #  define ALIAS2(from,to) \
     _X_INTERNAL PURE FASTCALL GLint __gl ## from ## _size( GLenum e ) \
         __attribute__ ((alias( # to )));
@@ -313,6 +310,33 @@ _X_INTERNAL PURE FASTCALL GLint
 __glGetBooleanv_size( GLenum e )
 {
     switch( e ) {
+        case GL_FOG_COORDINATE_SOURCE:
+        case GL_COMPRESSED_TEXTURE_FORMATS:
+        case GL_MIN_PROGRAM_TEXEL_OFFSET:
+        case GL_MAX_PROGRAM_TEXEL_OFFSET:
+        case GL_RGBA_INTEGER_MODE_EXT:
+        case GL_POLYGON_OFFSET_CLAMP_EXT:
+        case GL_WINDOW_RECTANGLE_MODE_EXT:
+        case GL_MAX_WINDOW_RECTANGLES_EXT:
+        case GL_NUM_WINDOW_RECTANGLES_EXT:
+        case GL_SAMPLE_LOCATION_SUBPIXEL_BITS_ARB:
+/*      case GL_SAMPLE_LOCATION_SUBPIXEL_BITS_NV:*/
+        case GL_SAMPLE_LOCATION_PIXEL_GRID_WIDTH_ARB:
+/*      case GL_SAMPLE_LOCATION_PIXEL_GRID_WIDTH_NV:*/
+        case GL_SAMPLE_LOCATION_PIXEL_GRID_HEIGHT_ARB:
+/*      case GL_SAMPLE_LOCATION_PIXEL_GRID_HEIGHT_NV:*/
+        case GL_PROGRAMMABLE_SAMPLE_LOCATION_TABLE_SIZE_ARB:
+/*      case GL_PROGRAMMABLE_SAMPLE_LOCATION_TABLE_SIZE_NV:*/
+        case GL_CONSERVATIVE_RASTERIZATION_NV:
+        case GL_SUBPIXEL_PRECISION_BIAS_X_BITS_NV:
+        case GL_SUBPIXEL_PRECISION_BIAS_Y_BITS_NV:
+        case GL_MAX_SUBPIXEL_PRECISION_BIAS_BITS_NV:
+        case GL_CONSERVATIVE_RASTER_DILATE_NV:
+        case GL_CONSERVATIVE_RASTER_DILATE_RANGE_NV:
+        case GL_CONSERVATIVE_RASTER_DILATE_GRANULARITY_NV:
+        case GL_MULTISAMPLE_LINE_WIDTH_GRANULARITY_ARB:
+        case GL_CONSERVATIVE_RASTER_MODE_NV:
+            return __glGetBooleanv_variable_size( e );
         case GL_CURRENT_INDEX:
         case GL_CURRENT_RASTER_INDEX:
         case GL_CURRENT_RASTER_POSITION_VALID:
@@ -750,6 +774,9 @@ __glGetBooleanv_size( GLenum e )
 /*      case GL_MAX_COLOR_ATTACHMENTS_EXT:*/
         case GL_MAX_SAMPLES:
 /*      case GL_MAX_SAMPLES_EXT:*/
+        case GL_DEPTH_CLAMP_NEAR_AMD:
+        case GL_DEPTH_CLAMP_FAR_AMD:
+        case GL_CONTEXT_ROBUST_ACCESS:
         case GL_MAX_SERVER_WAIT_TIMEOUT:
         case GL_MAX_DEBUG_MESSAGE_LENGTH_ARB:
 /*      case GL_MAX_DEBUG_MESSAGE_LENGTH:*/
@@ -769,6 +796,7 @@ __glGetBooleanv_size( GLenum e )
         case GL_ALIASED_POINT_SIZE_RANGE:
         case GL_ALIASED_LINE_WIDTH_RANGE:
         case GL_DEPTH_BOUNDS_EXT:
+        case GL_MULTISAMPLE_LINE_WIDTH_RANGE_ARB:
             return 2;
         case GL_CURRENT_NORMAL:
         case GL_POINT_DISTANCE_ATTENUATION:
@@ -791,6 +819,8 @@ __glGetBooleanv_size( GLenum e )
         case GL_CURRENT_SECONDARY_COLOR:
         case GL_WINDOW_RECTANGLE_EXT:
             return 4;
+        case GL_PRIMITIVE_BOUNDING_BOX_ARB:
+            return 8;
         case GL_MODELVIEW_MATRIX:
         case GL_PROJECTION_MATRIX:
         case GL_TEXTURE_MATRIX:
@@ -830,16 +860,6 @@ __glGetBooleanv_size( GLenum e )
         case GL_MODELVIEW31_ARB:
         case GL_TRANSPOSE_CURRENT_MATRIX_ARB:
             return 16;
-        case GL_FOG_COORDINATE_SOURCE:
-        case GL_COMPRESSED_TEXTURE_FORMATS:
-        case GL_MIN_PROGRAM_TEXEL_OFFSET:
-        case GL_MAX_PROGRAM_TEXEL_OFFSET:
-        case GL_RGBA_INTEGER_MODE_EXT:
-        case GL_POLYGON_OFFSET_CLAMP_EXT:
-        case GL_WINDOW_RECTANGLE_MODE_EXT:
-        case GL_MAX_WINDOW_RECTANGLES_EXT:
-        case GL_NUM_WINDOW_RECTANGLES_EXT:
-            return __glGetBooleanv_variable_size( e );
         default: return 0;
     }
 }

@@ -41,7 +41,6 @@
 #include <string.h>
 #include "compiler.h"
 #include "glheader.h"
-#include "errors.h"
 #include "util/bitscan.h"
 
 #ifdef __cplusplus
@@ -317,47 +316,12 @@ extern void *
 _mesa_align_realloc(void *oldBuffer, size_t oldSize, size_t newSize,
                     unsigned long alignment);
 
-extern void *
-_mesa_exec_malloc( GLuint size );
-
-extern void 
-_mesa_exec_free( void *addr );
-
-
-#ifdef HAVE___BUILTIN_POPCOUNT
-#define _mesa_bitcount(i) __builtin_popcount(i)
-#else
-extern unsigned int
-_mesa_bitcount(unsigned int n);
-#endif
-
-#ifdef HAVE___BUILTIN_POPCOUNTLL
-#define _mesa_bitcount_64(i) __builtin_popcountll(i)
-#else
-extern unsigned int
-_mesa_bitcount_64(uint64_t n);
-#endif
-
-
-static inline bool
-_mesa_half_is_negative(GLhalfARB h)
-{
-   return h & 0x8000;
-}
-
-extern unsigned int
-_mesa_str_checksum(const char *str);
-
 extern int
 _mesa_snprintf( char *str, size_t size, const char *fmt, ... ) PRINTFLIKE(3, 4);
 
 extern int
 _mesa_vsnprintf(char *str, size_t size, const char *fmt, va_list arg);
 
-
-#if defined(_MSC_VER) && !defined(snprintf)
-#define snprintf _snprintf
-#endif
 
 #if defined(_WIN32) && !defined(strtok_r)
 #define strtok_r strtok_s

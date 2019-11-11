@@ -20,7 +20,7 @@
  * This has an intricate link between the cipher and the MAC. The
  * keying of both is done in by the cipher and setting of the IV is
  * done by the MAC. One cannot operate without the other. The
- * configuration of the ssh2_cipher structure ensures that the MAC is
+ * configuration of the ssh2_cipheralg structure ensures that the MAC is
  * set (and others ignored) if this cipher is chosen.
  *
  * This cipher also encrypts the length using a different
@@ -45,7 +45,7 @@ struct chacha20 {
      * 4-11 are the key
      * 12-13 are the counter
      * 14-15 are the IV */
-    uint32 state[16];
+    uint32_t state[16];
     /* The output of the state above ready to xor */
     unsigned char current[64];
     /* The index of the above currently used to allow a true streaming cipher */
@@ -55,7 +55,7 @@ struct chacha20 {
 static INLINE void chacha20_round(struct chacha20 *ctx)
 {
     int i;
-    uint32 copy[16];
+    uint32_t copy[16];
 
     /* Take a copy */
     memcpy(copy, ctx->state, sizeof(copy));
@@ -114,7 +114,7 @@ static INLINE void chacha20_round(struct chacha20 *ctx)
     /* Increment round counter */
     ++ctx->state[12];
     /* Check for overflow, not done in one line so the 32 bits are chopped by the type */
-    if (!(uint32)(ctx->state[12])) {
+    if (!(uint32_t)(ctx->state[12])) {
         ++ctx->state[13];
     }
 }
@@ -440,9 +440,10 @@ static void bigval_mul_mod_p(bigval *r, const bigval *a, const bigval *b)
 
 static void bigval_final_reduce(bigval *n)
 {
-    BignumInt v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v12, v13, v14, v15;
-    BignumInt v16, v17, v18, v19, v20, v21, v22, v24, v25, v26, v27, v28, v29;
-    BignumInt v30, v31, v32, v33;
+    BignumInt v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v13, v14, v15;
+    BignumInt v16, v17, v18, v19, v20, v21, v22, v23, v24, v25, v26, v27, v28;
+    BignumInt v29, v30, v31, v32, v34, v35, v36, v37, v38, v39, v40, v41, v42;
+    BignumInt v43;
     BignumCarry carry;
 
     v0 = n->w[0];
@@ -455,45 +456,55 @@ static void bigval_final_reduce(bigval *n)
     v7 = n->w[7];
     v8 = n->w[8];
     v9 = (v8) >> 2;
-    v10 = 5 * v9;
-    BignumADC(v12, carry, v0, v10, 0);
-    (void)v12;
-    BignumADC(v13, carry, v1, 0, carry);
-    (void)v13;
-    BignumADC(v14, carry, v2, 0, carry);
-    (void)v14;
-    BignumADC(v15, carry, v3, 0, carry);
-    (void)v15;
-    BignumADC(v16, carry, v4, 0, carry);
-    (void)v16;
-    BignumADC(v17, carry, v5, 0, carry);
-    (void)v17;
-    BignumADC(v18, carry, v6, 0, carry);
-    (void)v18;
-    BignumADC(v19, carry, v7, 0, carry);
-    (void)v19;
-    v20 = v8 + 0 + carry;
-    v21 = (v20) >> 2;
-    v22 = 5 * v21;
-    BignumADC(v24, carry, v0, v22, 0);
-    BignumADC(v25, carry, v1, 0, carry);
-    BignumADC(v26, carry, v2, 0, carry);
-    BignumADC(v27, carry, v3, 0, carry);
-    BignumADC(v28, carry, v4, 0, carry);
-    BignumADC(v29, carry, v5, 0, carry);
-    BignumADC(v30, carry, v6, 0, carry);
-    BignumADC(v31, carry, v7, 0, carry);
-    v32 = v8 + 0 + carry;
-    v33 = (v32) & ((((BignumInt)1) << 2)-1);
-    n->w[0] = v24;
-    n->w[1] = v25;
-    n->w[2] = v26;
-    n->w[3] = v27;
-    n->w[4] = v28;
-    n->w[5] = v29;
-    n->w[6] = v30;
-    n->w[7] = v31;
-    n->w[8] = v33;
+    v10 = (v8) & ((((BignumInt)1) << 2)-1);
+    v11 = 5 * v9;
+    BignumADC(v13, carry, v0, v11, 0);
+    BignumADC(v14, carry, v1, 0, carry);
+    BignumADC(v15, carry, v2, 0, carry);
+    BignumADC(v16, carry, v3, 0, carry);
+    BignumADC(v17, carry, v4, 0, carry);
+    BignumADC(v18, carry, v5, 0, carry);
+    BignumADC(v19, carry, v6, 0, carry);
+    BignumADC(v20, carry, v7, 0, carry);
+    v21 = v10 + 0 + carry;
+    BignumADC(v22, carry, v13, 5, 0);
+    (void)v22;
+    BignumADC(v23, carry, v14, 0, carry);
+    (void)v23;
+    BignumADC(v24, carry, v15, 0, carry);
+    (void)v24;
+    BignumADC(v25, carry, v16, 0, carry);
+    (void)v25;
+    BignumADC(v26, carry, v17, 0, carry);
+    (void)v26;
+    BignumADC(v27, carry, v18, 0, carry);
+    (void)v27;
+    BignumADC(v28, carry, v19, 0, carry);
+    (void)v28;
+    BignumADC(v29, carry, v20, 0, carry);
+    (void)v29;
+    v30 = v21 + 0 + carry;
+    v31 = (v30) >> 2;
+    v32 = 5 * v31;
+    BignumADC(v34, carry, v13, v32, 0);
+    BignumADC(v35, carry, v14, 0, carry);
+    BignumADC(v36, carry, v15, 0, carry);
+    BignumADC(v37, carry, v16, 0, carry);
+    BignumADC(v38, carry, v17, 0, carry);
+    BignumADC(v39, carry, v18, 0, carry);
+    BignumADC(v40, carry, v19, 0, carry);
+    BignumADC(v41, carry, v20, 0, carry);
+    v42 = v21 + 0 + carry;
+    v43 = (v42) & ((((BignumInt)1) << 2)-1);
+    n->w[0] = v34;
+    n->w[1] = v35;
+    n->w[2] = v36;
+    n->w[3] = v37;
+    n->w[4] = v38;
+    n->w[5] = v39;
+    n->w[6] = v40;
+    n->w[7] = v41;
+    n->w[8] = v43;
 }
 
 #elif BIGNUM_INT_BITS == 32
@@ -604,8 +615,8 @@ static void bigval_mul_mod_p(bigval *r, const bigval *a, const bigval *b)
 
 static void bigval_final_reduce(bigval *n)
 {
-    BignumInt v0, v1, v2, v3, v4, v5, v6, v8, v9, v10, v11, v12, v13, v14;
-    BignumInt v16, v17, v18, v19, v20, v21;
+    BignumInt v0, v1, v2, v3, v4, v5, v6, v7, v9, v10, v11, v12, v13, v14;
+    BignumInt v15, v16, v17, v18, v19, v20, v22, v23, v24, v25, v26, v27;
     BignumCarry carry;
 
     v0 = n->w[0];
@@ -614,29 +625,35 @@ static void bigval_final_reduce(bigval *n)
     v3 = n->w[3];
     v4 = n->w[4];
     v5 = (v4) >> 2;
-    v6 = 5 * v5;
-    BignumADC(v8, carry, v0, v6, 0);
-    (void)v8;
-    BignumADC(v9, carry, v1, 0, carry);
-    (void)v9;
-    BignumADC(v10, carry, v2, 0, carry);
-    (void)v10;
-    BignumADC(v11, carry, v3, 0, carry);
-    (void)v11;
-    v12 = v4 + 0 + carry;
-    v13 = (v12) >> 2;
-    v14 = 5 * v13;
-    BignumADC(v16, carry, v0, v14, 0);
-    BignumADC(v17, carry, v1, 0, carry);
-    BignumADC(v18, carry, v2, 0, carry);
-    BignumADC(v19, carry, v3, 0, carry);
-    v20 = v4 + 0 + carry;
-    v21 = (v20) & ((((BignumInt)1) << 2)-1);
-    n->w[0] = v16;
-    n->w[1] = v17;
-    n->w[2] = v18;
-    n->w[3] = v19;
-    n->w[4] = v21;
+    v6 = (v4) & ((((BignumInt)1) << 2)-1);
+    v7 = 5 * v5;
+    BignumADC(v9, carry, v0, v7, 0);
+    BignumADC(v10, carry, v1, 0, carry);
+    BignumADC(v11, carry, v2, 0, carry);
+    BignumADC(v12, carry, v3, 0, carry);
+    v13 = v6 + 0 + carry;
+    BignumADC(v14, carry, v9, 5, 0);
+    (void)v14;
+    BignumADC(v15, carry, v10, 0, carry);
+    (void)v15;
+    BignumADC(v16, carry, v11, 0, carry);
+    (void)v16;
+    BignumADC(v17, carry, v12, 0, carry);
+    (void)v17;
+    v18 = v13 + 0 + carry;
+    v19 = (v18) >> 2;
+    v20 = 5 * v19;
+    BignumADC(v22, carry, v9, v20, 0);
+    BignumADC(v23, carry, v10, 0, carry);
+    BignumADC(v24, carry, v11, 0, carry);
+    BignumADC(v25, carry, v12, 0, carry);
+    v26 = v13 + 0 + carry;
+    v27 = (v26) & ((((BignumInt)1) << 2)-1);
+    n->w[0] = v22;
+    n->w[1] = v23;
+    n->w[2] = v24;
+    n->w[3] = v25;
+    n->w[4] = v27;
 }
 
 #elif BIGNUM_INT_BITS == 64
@@ -705,28 +722,33 @@ static void bigval_mul_mod_p(bigval *r, const bigval *a, const bigval *b)
 
 static void bigval_final_reduce(bigval *n)
 {
-    BignumInt v0, v1, v2, v3, v4, v6, v7, v8, v9, v10, v12, v13, v14, v15;
+    BignumInt v0, v1, v2, v3, v4, v5, v7, v8, v9, v10, v11, v12, v13, v14;
+    BignumInt v16, v17, v18, v19;
     BignumCarry carry;
 
     v0 = n->w[0];
     v1 = n->w[1];
     v2 = n->w[2];
     v3 = (v2) >> 2;
-    v4 = 5 * v3;
-    BignumADC(v6, carry, v0, v4, 0);
-    (void)v6;
-    BignumADC(v7, carry, v1, 0, carry);
-    (void)v7;
-    v8 = v2 + 0 + carry;
-    v9 = (v8) >> 2;
-    v10 = 5 * v9;
-    BignumADC(v12, carry, v0, v10, 0);
-    BignumADC(v13, carry, v1, 0, carry);
-    v14 = v2 + 0 + carry;
-    v15 = (v14) & ((((BignumInt)1) << 2)-1);
-    n->w[0] = v12;
-    n->w[1] = v13;
-    n->w[2] = v15;
+    v4 = (v2) & ((((BignumInt)1) << 2)-1);
+    v5 = 5 * v3;
+    BignumADC(v7, carry, v0, v5, 0);
+    BignumADC(v8, carry, v1, 0, carry);
+    v9 = v4 + 0 + carry;
+    BignumADC(v10, carry, v7, 5, 0);
+    (void)v10;
+    BignumADC(v11, carry, v8, 0, carry);
+    (void)v11;
+    v12 = v9 + 0 + carry;
+    v13 = (v12) >> 2;
+    v14 = 5 * v13;
+    BignumADC(v16, carry, v7, v14, 0);
+    BignumADC(v17, carry, v8, 0, carry);
+    v18 = v9 + 0 + carry;
+    v19 = (v18) & ((((BignumInt)1) << 2)-1);
+    n->w[0] = v16;
+    n->w[1] = v17;
+    n->w[2] = v19;
 }
 
 #else
@@ -842,35 +864,44 @@ struct ccp_context {
     unsigned char mac_iv[8];
 
     struct poly1305 mac;
+
+    BinarySink_IMPLEMENTATION;
+    ssh2_cipher cvt;
+    ssh2_mac mac_if;
 };
 
-static void *poly_make_context(void *ctx)
+static ssh2_mac *poly_ssh2_new(
+    const struct ssh2_macalg *alg, ssh2_cipher *cipher)
 {
-    return ctx;
+    struct ccp_context *ctx = container_of(cipher, struct ccp_context, cvt);
+    ctx->mac_if.vt = alg;
+    BinarySink_DELEGATE_INIT(&ctx->mac_if, ctx);
+    return &ctx->mac_if;
 }
 
-static void poly_free_context(void *ctx)
+static void poly_ssh2_free(ssh2_mac *mac)
 {
     /* Not allocated, just forwarded, no need to free */
 }
 
-static void poly_setkey(void *ctx, unsigned char *key)
+static void poly_setkey(ssh2_mac *mac, const void *key)
 {
     /* Uses the same context as ChaCha20, so ignore */
 }
 
-static void poly_start(void *handle)
+static void poly_start(ssh2_mac *mac)
 {
-    struct ccp_context *ctx = (struct ccp_context *)handle;
+    struct ccp_context *ctx = container_of(mac, struct ccp_context, mac_if);
 
     ctx->mac_initialised = 0;
     memset(ctx->mac_iv, 0, 8);
     poly1305_init(&ctx->mac);
 }
 
-static void poly_bytes(void *handle, unsigned char const *blk, int len)
+static void poly_BinarySink_write(BinarySink *bs, const void *blkv, size_t len)
 {
-    struct ccp_context *ctx = (struct ccp_context *)handle;
+    struct ccp_context *ctx = BinarySink_DOWNCAST(bs, struct ccp_context);
+    const unsigned char *blk = (const unsigned char *)blkv;
 
     /* First 4 bytes are the IV */
     while (ctx->mac_initialised < 4 && len) {
@@ -900,106 +931,68 @@ static void poly_bytes(void *handle, unsigned char const *blk, int len)
     }
 }
 
-static void poly_genresult(void *handle, unsigned char *blk)
+static void poly_genresult(ssh2_mac *mac, unsigned char *blk)
 {
-    struct ccp_context *ctx = (struct ccp_context *)handle;
+    struct ccp_context *ctx = container_of(mac, struct ccp_context, mac_if);
     poly1305_finalise(&ctx->mac, blk);
 }
 
-static int poly_verresult(void *handle, unsigned char const *blk)
-{
-    struct ccp_context *ctx = (struct ccp_context *)handle;
-    int res;
-    unsigned char mac[16];
-    poly1305_finalise(&ctx->mac, mac);
-    res = smemeq(blk, mac, 16);
-    return res;
-}
-
-/* The generic poly operation used before generate and verify */
-static void poly_op(void *handle, unsigned char *blk, int len, unsigned long seq)
-{
-    unsigned char iv[4];
-    poly_start(handle);
-    PUT_32BIT_MSB_FIRST(iv, seq);
-    /* poly_bytes expects the first 4 bytes to be the IV */
-    poly_bytes(handle, iv, 4);
-    smemclr(iv, sizeof(iv));
-    poly_bytes(handle, blk, len);
-}
-
-static void poly_generate(void *handle, unsigned char *blk, int len, unsigned long seq)
-{
-    poly_op(handle, blk, len, seq);
-    poly_genresult(handle, blk+len);
-}
-
-static int poly_verify(void *handle, unsigned char *blk, int len, unsigned long seq)
-{
-    poly_op(handle, blk, len, seq);
-    return poly_verresult(handle, blk+len);
-}
-
-static const struct ssh_mac ssh2_poly1305 = {
-    poly_make_context, poly_free_context,
-    poly_setkey,
-
-    /* whole-packet operations */
-    poly_generate, poly_verify,
-
-    /* partial-packet operations */
-    poly_start, poly_bytes, poly_genresult, poly_verresult,
+static const struct ssh2_macalg ssh2_poly1305 = {
+    poly_ssh2_new, poly_ssh2_free, poly_setkey,
+    poly_start, poly_genresult,
 
     "", "", /* Not selectable individually, just part of ChaCha20-Poly1305 */
     16, 0, "Poly1305"
 };
 
-static void *ccp_make_context(void)
+static ssh2_cipher *ccp_new(const struct ssh2_cipheralg *alg)
 {
     struct ccp_context *ctx = snew(struct ccp_context);
-    if (ctx) {
-        poly1305_init(&ctx->mac);
-    }
-    return ctx;
+    BinarySink_INIT(ctx, poly_BinarySink_write);
+    poly1305_init(&ctx->mac);
+    ctx->cvt = alg;
+    return &ctx->cvt;
 }
 
-static void ccp_free_context(void *vctx)
+static void ccp_free(ssh2_cipher *cipher)
 {
-    struct ccp_context *ctx = (struct ccp_context *)vctx;
+    struct ccp_context *ctx = container_of(cipher, struct ccp_context, cvt);
     smemclr(&ctx->a_cipher, sizeof(ctx->a_cipher));
     smemclr(&ctx->b_cipher, sizeof(ctx->b_cipher));
     smemclr(&ctx->mac, sizeof(ctx->mac));
     sfree(ctx);
 }
 
-static void ccp_iv(void *vctx, unsigned char *iv)
+static void ccp_iv(ssh2_cipher *cipher, const void *iv)
 {
-    /* struct ccp_context *ctx = (struct ccp_context *)vctx; */
+    /* struct ccp_context *ctx =
+           container_of(cipher, struct ccp_context, cvt); */
     /* IV is set based on the sequence number */
 }
 
-static void ccp_key(void *vctx, unsigned char *key)
+static void ccp_key(ssh2_cipher *cipher, const void *vkey)
 {
-    struct ccp_context *ctx = (struct ccp_context *)vctx;
+    const unsigned char *key = (const unsigned char *)vkey;
+    struct ccp_context *ctx = container_of(cipher, struct ccp_context, cvt);
     /* Initialise the a_cipher (for decrypting lengths) with the first 256 bits */
     chacha20_key(&ctx->a_cipher, key + 32);
     /* Initialise the b_cipher (for content and MAC) with the second 256 bits */
     chacha20_key(&ctx->b_cipher, key);
 }
 
-static void ccp_encrypt(void *vctx, unsigned char *blk, int len)
+static void ccp_encrypt(ssh2_cipher *cipher, void *blk, int len)
 {
-    struct ccp_context *ctx = (struct ccp_context *)vctx;
+    struct ccp_context *ctx = container_of(cipher, struct ccp_context, cvt);
     chacha20_encrypt(&ctx->b_cipher, blk, len);
 }
 
-static void ccp_decrypt(void *vctx, unsigned char *blk, int len)
+static void ccp_decrypt(ssh2_cipher *cipher, void *blk, int len)
 {
-    struct ccp_context *ctx = (struct ccp_context *)vctx;
+    struct ccp_context *ctx = container_of(cipher, struct ccp_context, cvt);
     chacha20_decrypt(&ctx->b_cipher, blk, len);
 }
 
-static void ccp_length_op(struct ccp_context *ctx, unsigned char *blk, int len,
+static void ccp_length_op(struct ccp_context *ctx, void *blk, int len,
                           unsigned long seq)
 {
     unsigned char iv[8];
@@ -1016,26 +1009,26 @@ static void ccp_length_op(struct ccp_context *ctx, unsigned char *blk, int len,
     smemclr(iv, sizeof(iv));
 }
 
-static void ccp_encrypt_length(void *vctx, unsigned char *blk, int len,
+static void ccp_encrypt_length(ssh2_cipher *cipher, void *blk, int len,
                                unsigned long seq)
 {
-    struct ccp_context *ctx = (struct ccp_context *)vctx;
+    struct ccp_context *ctx = container_of(cipher, struct ccp_context, cvt);
     ccp_length_op(ctx, blk, len, seq);
     chacha20_encrypt(&ctx->a_cipher, blk, len);
 }
 
-static void ccp_decrypt_length(void *vctx, unsigned char *blk, int len,
+static void ccp_decrypt_length(ssh2_cipher *cipher, void *blk, int len,
                                unsigned long seq)
 {
-    struct ccp_context *ctx = (struct ccp_context *)vctx;
+    struct ccp_context *ctx = container_of(cipher, struct ccp_context, cvt);
     ccp_length_op(ctx, blk, len, seq);
     chacha20_decrypt(&ctx->a_cipher, blk, len);
 }
 
-static const struct ssh2_cipher ssh2_chacha20_poly1305 = {
+static const struct ssh2_cipheralg ssh2_chacha20_poly1305 = {
 
-    ccp_make_context,
-    ccp_free_context,
+    ccp_new,
+    ccp_free,
     ccp_iv,
     ccp_key,
     ccp_encrypt,
@@ -1049,7 +1042,7 @@ static const struct ssh2_cipher ssh2_chacha20_poly1305 = {
     &ssh2_poly1305
 };
 
-static const struct ssh2_cipher *const ccp_list[] = {
+static const struct ssh2_cipheralg *const ccp_list[] = {
     &ssh2_chacha20_poly1305
 };
 

@@ -142,7 +142,7 @@ XkbFreeRMLVOSet(XkbRMLVOSet * rmlvo, Bool freeRMLVO)
 }
 
 static Bool
-XkbWriteRulesProp(ClientPtr client, void *closure)
+XkbWriteRulesProp(void)
 {
     int len, out;
     Atom name;
@@ -235,7 +235,7 @@ XkbSetRulesUsed(XkbRMLVOSet * rmlvo)
     free(XkbOptionsUsed);
     XkbOptionsUsed = (rmlvo->options ? Xstrdup(rmlvo->options) : NULL);
     if (XkbWantRulesProp)
-        QueueWorkProc(XkbWriteRulesProp, NULL, NULL);
+        XkbWriteRulesProp();
     return;
 }
 
@@ -505,6 +505,13 @@ XkbInitControls(DeviceIntPtr pXDev, XkbSrvInfoPtr xkbi)
     return Success;
 }
 
+static Status
+XkbInitOverlayState(XkbSrvInfoPtr xkbi)
+{
+    memset(xkbi->overlay_perkey_state, 0, sizeof(xkbi->overlay_perkey_state));
+    return Success;
+}
+
 static Bool
 InitKeyboardDeviceStructInternal(DeviceIntPtr dev, XkbRMLVOSet * rmlvo,
                                  const char *keymap, int keymap_length,
@@ -607,6 +614,8 @@ InitKeyboardDeviceStructInternal(DeviceIntPtr dev, XkbRMLVOSet * rmlvo,
     XkbInitControls(dev, xkbi);
 
     XkbInitIndicatorMap(xkbi);
+
+    XkbInitOverlayState(xkbi);
 
     XkbUpdateActions(dev, xkb->min_key_code, XkbNumKeys(xkb), &changes,
                      &check, &cause);
@@ -728,7 +737,7 @@ extern int XkbDfltRepeatInterval;
 extern unsigned short XkbDfltAccessXTimeout;
 extern unsigned int XkbDfltAccessXTimeoutMask;
 extern unsigned int XkbDfltAccessXFeedback;
-extern unsigned short	XkbDfltAccessXOptions;
+extern unsigned short XkbDfltAccessXOptions;
 
 int
 XkbProcessArguments(int argc, char *argv[], int i)
@@ -789,7 +798,7 @@ XkbProcessArguments(int argc, char *argv[], int i)
                     j++;
                 }
                 if (((i + 1) < argc) && (isdigit(argv[i + 1][0]))) {
-                    XkbDfltAccessXOptions=(unsigned short)
+                    XkbDfltAccessXOptions = (unsigned short)
                         strtol(argv[++i], NULL, 16);
                     j++;
                 }
@@ -797,6 +806,7 @@ XkbProcessArguments(int argc, char *argv[], int i)
         }
         return j;
     }
+#ifndef _MSC_VER
     if ((strcmp(argv[i], "-ardelay") == 0) || (strcmp(argv[i], "-ar1") == 0)) { /* -ardelay int */
         if (++i >= argc)
             UseMsg();
@@ -811,6 +821,7 @@ XkbProcessArguments(int argc, char *argv[], int i)
             XkbDfltRepeatInterval = (long) atoi(argv[i]);
         return 2;
     }
+#endif
     return 0;
 }
 
@@ -820,6 +831,8 @@ XkbUseMsg(void)
     ErrorF
         ("[+-]accessx [ timeout [ timeout_mask [ feedback [ options_mask] ] ] ]\n");
     ErrorF("                       enable/disable accessx key sequences\n");
+#ifndef _MSC_VER
     ErrorF("-ardelay               set XKB autorepeat delay\n");
     ErrorF("-arinterval            set XKB autorepeat interval\n");
+#endif
 }

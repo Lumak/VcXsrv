@@ -281,13 +281,40 @@ winRaiseWindow(WindowPtr pWin)
 {
     if (!winInDestroyWindowsWindow && !winInRaiseWindow) {
         BOOL oldstate = winInRaiseWindow;
-        XID vlist[1] = { 0 };
+        XID vlist[1];
+        vlist[0]= Above;
         winInRaiseWindow = TRUE;
         /* Call configure window directly to make sure it gets processed
          * in time
          */
-        ConfigureWindow(pWin, CWStackMode, vlist, serverClient);
+        winConfigureWindow(pWin, CWStackMode, vlist, serverClient);
         winInRaiseWindow = oldstate;
+    }
+}
+
+static void raiseWinIfNeeded(WindowPtr pWin, HWND hwnd)
+{
+    /* Check if this window is top of X windows. */
+    HWND hWndAbove = NULL;
+    DWORD dwCurrentProcessID = GetCurrentProcessId();
+    DWORD dwWindowProcessID = 0;
+
+    for (hWndAbove = hwnd;
+            hWndAbove != NULL;
+            hWndAbove = GetNextWindow(hWndAbove, GW_HWNDPREV)) {
+        /* Ignore other XWin process's window */
+        GetWindowThreadProcessId(hWndAbove, &dwWindowProcessID);
+
+        if ((dwWindowProcessID == dwCurrentProcessID)
+                && GetProp(hWndAbove, WIN_WINDOW_PROP)
+                && !IsWindowVisible(hWndAbove)
+                && !IsIconic(hWndAbove))        /* ignore minimized windows */
+            break;
+    }
+    /* If this is top of X windows in Windows stack,
+       raise it in X stack. */
+    if (hWndAbove == NULL) {
+        winRaiseWindow(pWin);
     }
 }
 
@@ -306,6 +333,38 @@ winStartMousePolling(winPrivScreenPtr s_pScreenPriv)
                                             MOUSE_POLLING_INTERVAL, NULL);
 }
 
+void DispatchQueuedEvents(Bool);
+#define UPDATETIMER 1234
+
+static
+void
+winAdjustXWindowState(winPrivScreenPtr s_pScreenPriv, winWMMessageRec *wmMsg)
+{
+    /* Do nothing if window has not yet been given initial state */
+    if (!GetProp(wmMsg->hwndWindow, WIN_STATE_PROP))
+        return;
+
+    wmMsg->msg = WM_WM_CHANGE_STATE;
+    if (IsIconic(wmMsg->hwndWindow)) {
+        wmMsg->dwID = 3; // IconicState
+        winSendMessageToWM(s_pScreenPriv->pWMInfo, wmMsg);
+    }
+    else if (IsZoomed(wmMsg->hwndWindow)) {
+        wmMsg->dwID = 2; // ZoomState
+        winSendMessageToWM(s_pScreenPriv->pWMInfo, wmMsg);
+    }
+    else if (IsWindowVisible(wmMsg->hwndWindow)) {
+        wmMsg->dwID = 1; // NormalState
+        winSendMessageToWM(s_pScreenPriv->pWMInfo, wmMsg);
+     }
+    else {
+        /* Only the client, not the user can Withdraw windows, so it doesn't make
+           much sense to handle that state here, and anything else is an
+           unanticapted state. */
+        ErrorF("winAdjustXWindowState - Unknown state for %p\n", wmMsg->hwndWindow);
+    }
+}
+
 /*
  * winTopLevelWindowProc - Window procedure for all top-level Windows windows.
  */
@@ -314,7 +373,6 @@ LRESULT CALLBACK
 winTopLevelWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
     POINT ptMouse;
-    HDC hdcUpdate;
     PAINTSTRUCT ps;
     WindowPtr pWin = NULL;
     winPrivWinPtr pWinPriv = NULL;
@@ -324,11 +382,8 @@ winTopLevelWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
     HWND hwndScreen = NULL;
     DrawablePtr pDraw = NULL;
     winWMMessageRec wmMsg;
-    Bool fWMMsgInitialized = FALSE;
     static Bool s_fTracking = FALSE;
-    Bool needRestack = FALSE;
     LRESULT ret;
-    static Bool hasEnteredSizeMove = FALSE;
 
     winDebugWin32Message("winTopLevelWindowProc", hwnd, message, wParam,
                          lParam);
@@ -354,22 +409,17 @@ winTopLevelWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         /* */
         wmMsg.msg = 0;
         wmMsg.hwndWindow = hwnd;
-        wmMsg.iWindow = (Window) (INT_PTR) GetProp(hwnd, WIN_WID_PROP);
+        wmMsg.iWindow = pWin->drawable.id;
 
         wmMsg.iX = pDraw->x;
         wmMsg.iY = pDraw->y;
         wmMsg.iWidth = pDraw->width;
         wmMsg.iHeight = pDraw->height;
-
-        fWMMsgInitialized = TRUE;
-
     }
-    #ifdef _DEBUG
     else if (message!=WM_CREATE)
     {
         winDebug("Warning: message 0x%x received when WIN_WINDOW_PROP NULL\n",message);
     }
-  #endif
 
     /* Branch on message type */
     switch (message) {
@@ -385,13 +435,6 @@ winTopLevelWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
                 WIN_WID_PROP,
                 (HANDLE) (INT_PTR) winGetWindowID(((LPCREATESTRUCT) lParam)->
                                                   lpCreateParams));
-
-        /*
-         * Make X windows' Z orders sync with Windows windows because
-         * there can be AlwaysOnTop windows overlapped on the window
-         * currently being created.
-         */
-        winReorderWindowsMultiWindow();
 
         /* Fix a 'round title bar corner background should be transparent not black' problem when first painted */
         {
@@ -422,14 +465,6 @@ winTopLevelWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
             /* Don't pass customized menus to DefWindowProc */
             return 0;
         }
-        if (wParam == SC_RESTORE || wParam == SC_MAXIMIZE) {
-            WINDOWPLACEMENT wndpl;
-
-            wndpl.length = sizeof(wndpl);
-            if (GetWindowPlacement(hwnd, &wndpl) &&
-                wndpl.showCmd == SW_SHOWMINIMIZED)
-                needRestack = TRUE;
-        }
         break;
 
     case WM_INITMENU:
@@ -447,17 +482,8 @@ winTopLevelWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 
     case WM_PAINT:
         /* Only paint if our window handle is valid */
-        if (hwndScreen == NULL)
+        if (hwnd == NULL)
             break;
-
-        /* BeginPaint gives us an hdc that clips to the invalidated region */
-        hdcUpdate = BeginPaint(hwnd, &ps);
-        /* Avoid the BitBlt's if the PAINTSTRUCT is bogus */
-        if (ps.rcPaint.right == 0 && ps.rcPaint.bottom == 0 &&
-            ps.rcPaint.left == 0 && ps.rcPaint.top == 0) {
-            EndPaint(hwnd, &ps);
-            return 0;
-        }
 
 #ifdef XWIN_GLX_WINDOWS
         if (pWinPriv->fWglUsed) {
@@ -468,39 +494,27 @@ winTopLevelWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
                XXX: For now, just leave it alone, but ideally we want to send an expose event to
                the window so it really redraws the affected region...
              */
+            BeginPaint(hwnd, &ps);
             ValidateRect(hwnd, &(ps.rcPaint));
+            EndPaint(hwnd, &ps);
         }
         else
 #endif
-            /* Try to copy from the shadow buffer */
-        if (!BitBlt(hdcUpdate,
-                        ps.rcPaint.left, ps.rcPaint.top,
-                        ps.rcPaint.right - ps.rcPaint.left,
-                        ps.rcPaint.bottom - ps.rcPaint.top,
-                        s_pScreenPriv->hdcShadow,
-                        ps.rcPaint.left + pWin->drawable.x,
-                        ps.rcPaint.top + pWin->drawable.y, SRCCOPY)) {
-            LPVOID lpMsgBuf;
-
-            /* Display a fancy error message */
-            FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER |
-                          FORMAT_MESSAGE_FROM_SYSTEM |
-                          FORMAT_MESSAGE_IGNORE_INSERTS,
-                          NULL,
-                          GetLastError(),
-                          MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-                          (LPTSTR) &lpMsgBuf, 0, NULL);
-
-            ErrorF("winTopLevelWindowProc - BitBlt failed: %s\n",
-                   (LPSTR) lpMsgBuf);
-            LocalFree(lpMsgBuf);
-        }
-
-        /* EndPaint frees the DC */
-        EndPaint(hwnd, &ps);
+            /* Call the engine dependent repainter */
+            if (*s_pScreenPriv->pwinBltExposedWindowRegion)
+                (*s_pScreenPriv->pwinBltExposedWindowRegion) (s_pScreen, pWin);
         return 0;
 
     case WM_MOUSEMOVE:
+        if (wParam & (MK_LBUTTON|MK_RBUTTON|MK_MBUTTON))
+        {
+            if (lParam==GetWindowLongPtr(hwnd, WND_IDX_BUTTONDOWNLPARAM))
+            {
+                return 0;  /* Ignore the mouse since the mouse was not moved wrt the button down click */
+            }
+            SetWindowLongPtr(hwnd, WND_IDX_BUTTONDOWNLPARAM,-1);
+        }
+
         /* Unpack the client area mouse coordinates */
         ptMouse.x = GET_X_LPARAM(lParam);
         ptMouse.y = GET_Y_LPARAM(lParam);
@@ -604,6 +618,7 @@ winTopLevelWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 
     case WM_LBUTTONDBLCLK:
     case WM_LBUTTONDOWN:
+        SetWindowLongPtr(hwnd, WND_IDX_BUTTONDOWNLPARAM,lParam);
         if (s_pScreenPriv == NULL || s_pScreenInfo->fIgnoreInput)
             break;
         g_fButton[0] = TRUE;
@@ -620,6 +635,7 @@ winTopLevelWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 
     case WM_MBUTTONDBLCLK:
     case WM_MBUTTONDOWN:
+        SetWindowLongPtr(hwnd, WND_IDX_BUTTONDOWNLPARAM,lParam);
         if (s_pScreenPriv == NULL || s_pScreenInfo->fIgnoreInput)
             break;
         g_fButton[1] = TRUE;
@@ -636,6 +652,7 @@ winTopLevelWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 
     case WM_RBUTTONDBLCLK:
     case WM_RBUTTONDOWN:
+        SetWindowLongPtr(hwnd, WND_IDX_BUTTONDOWNLPARAM,lParam);
         if (s_pScreenPriv == NULL || s_pScreenInfo->fIgnoreInput)
             break;
         g_fButton[2] = TRUE;
@@ -652,6 +669,7 @@ winTopLevelWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 
     case WM_XBUTTONDBLCLK:
     case WM_XBUTTONDOWN:
+        SetWindowLongPtr(hwnd, WND_IDX_BUTTONDOWNLPARAM,lParam);
         if (s_pScreenPriv == NULL || s_pScreenInfo->fIgnoreInput)
             break;
         SetCapture(hwnd);
@@ -803,17 +821,12 @@ winTopLevelWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         SendMessage(hwndScreen, message, wParam, lParam);
 
         if (LOWORD(wParam) != WA_INACTIVE) {
-            /* Raise the window to the top in Z order */
-            /* ago: Activate does not mean putting it to front! */
-            /*
-               wmMsg.msg = WM_WM_RAISE;
-               if (fWMMsgInitialized)
-               winSendMessageToWM (s_pScreenPriv->pWMInfo, &wmMsg);
-             */
+            /* Raise the window to the top in Z order if needed */
+            raiseWinIfNeeded(pWin, GetNextWindow(hwnd, GW_HWNDPREV));
 
             /* Tell our Window Manager thread to activate the window */
             wmMsg.msg = WM_WM_ACTIVATE;
-            if (fWMMsgInitialized &&
+            if (pWin &&
                 pWin->realized && !pWin->overrideRedirect /* for OOo menus */)
                     winSendMessageToWM(s_pScreenPriv->pWMInfo, &wmMsg);
         }
@@ -841,7 +854,7 @@ winTopLevelWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         else {
             /* Tell our Window Manager thread to kill the window */
             wmMsg.msg = WM_WM_KILL;
-            if (fWMMsgInitialized)
+            if (pWin)
                 winSendMessageToWM(s_pScreenPriv->pWMInfo, &wmMsg);
         }
         return 0;
@@ -854,21 +867,23 @@ winTopLevelWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 
             /* Tell our Window Manager thread to kill the window */
             wmMsg.msg = WM_WM_KILL;
-            if (fWMMsgInitialized)
+            if (pWin)
                 winSendMessageToWM(s_pScreenPriv->pWMInfo, &wmMsg);
         }
 
         RemoveProp(hwnd, WIN_WINDOW_PROP);
         RemoveProp(hwnd, WIN_WID_PROP);
         RemoveProp(hwnd, WIN_NEEDMANAGE_PROP);
+        RemoveProp(hwnd, WIN_STATE_PROP);
 
+        winReorderWindowsMultiWindow();
         break;
 
     case WM_MOVE:
         /* Adjust the X Window to the moved Windows window */
-        if (!hasEnteredSizeMove)
-            winAdjustXWindow(pWin, hwnd);
-        /* else: Wait for WM_EXITSIZEMOVE */
+        winAdjustXWindow(pWin, hwnd);
+        if (GetWindowLongPtr(hwnd, WND_IDX_ENTEREDSIZEMOVE))
+          DispatchQueuedEvents(0);
         return 0;
 
     case WM_SHOWWINDOW:
@@ -911,7 +926,7 @@ winTopLevelWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
                     }
                 }
             }
-            wmMsg.msg = WM_WM_MAP3;
+            wmMsg.msg = WM_WM_MAP_MANAGED;
         }
         else {                  /* It is an overridden window so make it top of Z stack */
 
@@ -928,11 +943,11 @@ winTopLevelWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
                                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
                 }
             }
-            wmMsg.msg = WM_WM_MAP2;
+            wmMsg.msg = WM_WM_MAP_UNMANAGED;
         }
 
         /* Tell our Window Manager thread to map the window */
-        if (fWMMsgInitialized)
+        if (pWin)
             winSendMessageToWM(s_pScreenPriv->pWMInfo, &wmMsg);
 
         winStartMousePolling(s_pScreenPriv);
@@ -984,31 +999,7 @@ winTopLevelWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
             else if (pWinPos->hwndInsertAfter == HWND_BOTTOM) {
             }
             else {
-                /* Check if this window is top of X windows. */
-                HWND hWndAbove = NULL;
-                DWORD dwCurrentProcessID = GetCurrentProcessId();
-                DWORD dwWindowProcessID = 0;
-
-                for (hWndAbove = pWinPos->hwndInsertAfter;
-                     hWndAbove != NULL;
-                     hWndAbove = GetNextWindow(hWndAbove, GW_HWNDPREV)) {
-                    /* Ignore other XWin process's window */
-                    GetWindowThreadProcessId(hWndAbove, &dwWindowProcessID);
-
-                    if ((dwWindowProcessID == dwCurrentProcessID)
-                        && GetProp(hWndAbove, WIN_WINDOW_PROP)
-                        && !IsWindowVisible(hWndAbove)
-                        && !IsIconic(hWndAbove))        /* ignore minimized windows */
-                        break;
-                }
-                /* If this is top of X windows in Windows stack,
-                   raise it in X stack. */
-                if (hWndAbove == NULL) {
-#if CYGWINDOWING_DEBUG
-                    winDebug("\traise to top\n");
-#endif
-                    winRaiseWindow(pWin);
-                }
+                raiseWinIfNeeded(pWin, pWinPos->hwndInsertAfter);
             }
         }
     }
@@ -1019,13 +1010,21 @@ winTopLevelWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         break;
 
     case WM_ENTERSIZEMOVE:
-        hasEnteredSizeMove = TRUE;
+        SetWindowLongPtr(hwnd, WND_IDX_ENTEREDSIZEMOVE, TRUE);
+        SetTimer(hwnd, UPDATETIMER, 10, NULL);
+        return 0;
+
+    case WM_TIMER:
+        DispatchQueuedEvents(0);
         return 0;
 
     case WM_EXITSIZEMOVE:
         /* Adjust the X Window to the moved Windows window */
-        hasEnteredSizeMove = FALSE;
+        SetWindowLongPtr(hwnd, WND_IDX_ENTEREDSIZEMOVE, FALSE);
         winAdjustXWindow(pWin, hwnd);
+        KillTimer(hwnd, UPDATETIMER);
+        if (pWin)
+            winAdjustXWindowState(s_pScreenPriv, &wmMsg);
         return 0;
 
     case WM_SIZE:
@@ -1051,23 +1050,25 @@ winTopLevelWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
                (int) LOWORD(lParam), (int) HIWORD(lParam), buf);
     }
 #endif
-        if (!hasEnteredSizeMove)
-        {
-            /* Adjust the X Window to the moved Windows window */
-            winAdjustXWindow (pWin, hwnd);
-            if (wParam == SIZE_MINIMIZED) winReorderWindowsMultiWindow();
-    }
+        /* Adjust the X Window to the moved Windows window */
+        winAdjustXWindow (pWin, hwnd);
+        if (pWin)
+            winAdjustXWindowState(s_pScreenPriv, &wmMsg);
+        if (GetWindowLongPtr(hwnd, WND_IDX_ENTEREDSIZEMOVE))
+            DispatchQueuedEvents(0);
     /* else: wait for WM_EXITSIZEMOVE */
     return 0; /* end of WM_SIZE handler */
 
     case WM_STYLECHANGED:
       /* when the style changes, adjust the window size so the client area remains the same */
     {
-      LONG x,y;
-      DrawablePtr pDraw = &pWin->drawable;
-      x =  pDraw->x - wBorderWidth(pWin);
-      y = pDraw->y - wBorderWidth(pWin);
-      winPositionWindowMultiWindow(pWin, x, y);
+        LONG x,y;
+        DrawablePtr pDraw = &pWin->drawable;
+        x =  pDraw->x - wBorderWidth(pWin);
+        y = pDraw->y - wBorderWidth(pWin);
+        PositionWindowProcPtr saved=s_pScreen->PositionWindow;  // winPositionWindowMultiWindow is going to overwrite it
+        winPositionWindowMultiWindow(pWin, x, y);
+        s_pScreen->PositionWindow = saved;
     }
         return 0;
 
@@ -1095,12 +1096,5 @@ winTopLevelWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         break;
     }
 
-    ret = DefWindowProc(hwnd, message, wParam, lParam);
-    /*
-     * If the window was minized we get the stack change before the window is restored
-     * and so it gets lost. Ensure there stacking order is correct.
-     */
-    if (needRestack)
-        winReorderWindowsMultiWindow();
-    return ret;
+    return DefWindowProc(hwnd, message, wParam, lParam);
 }

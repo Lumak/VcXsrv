@@ -47,6 +47,7 @@
 #include "windisplay.h"
 #include "winmultiwindowclass.h"
 #include "winmultiwindowicons.h"
+#include "windowstr.h"
 
 /* Where will the custom menu commands start counting from? */
 #define STARTMENUID WM_USER
@@ -140,7 +141,6 @@ MakeMenu(char *name, HMENU editMenu, int editItem)
     return hmenu;
 }
 
-#ifdef XWIN_MULTIWINDOW
 /*
  * Callback routine that is executed once per window class.
  * Removes or creates custom window settings depending on LPARAM
@@ -185,7 +185,7 @@ ReloadEnumWindowsProc(HWND hwnd, LPARAM lParam)
 
                 wmMsg.msg = WM_WM_ICON_EVENT;
                 wmMsg.hwndWindow = hwnd;
-                wmMsg.iWindow = (Window) (INT_PTR) GetProp(hwnd, WIN_WID_PROP);
+                wmMsg.iWindow = pWin->drawable.id;
 
                 winSendMessageToWM(s_pScreenPriv->pWMInfo, &wmMsg);
             }
@@ -199,7 +199,6 @@ ReloadEnumWindowsProc(HWND hwnd, LPARAM lParam)
 
     return TRUE;
 }
-#endif
 
 /*
  * Removes any custom icons in classes, custom menus, etc.
@@ -212,7 +211,6 @@ ReloadPrefs(winPrivScreenPtr pScreenPriv)
 {
     int i;
 
-#ifdef XWIN_MULTIWINDOW
     winScreenInfo *pScreenInfo = pScreenPriv->pScreenInfo;
 
     /* First, iterate over all windows, deleting their icons and custom menus.
@@ -223,7 +221,6 @@ ReloadPrefs(winPrivScreenPtr pScreenPriv)
      */
     if (pScreenInfo->fMultiWindow)
         EnumThreadWindows(g_dwCurrentThreadID, ReloadEnumWindowsProc, FALSE);
-#endif
 
     /* Now, free/clear all info from our prefs structure */
     for (i = 0; i < pref.menuItems; i++)
@@ -266,14 +263,12 @@ ReloadPrefs(winPrivScreenPtr pScreenPriv)
     g_hIconX = NULL;
     g_hSmallIconX = NULL;
 
-#ifdef XWIN_MULTIWINDOW
     if (pScreenInfo->fMultiWindow) {
         winInitGlobalIcons();
 
         /* Rebuild the icons and menus */
         EnumThreadWindows(g_dwCurrentThreadID, ReloadEnumWindowsProc, TRUE);
     }
-#endif
 
     /* Whew, done */
 }
@@ -387,14 +382,6 @@ HandleCustomWM_COMMAND(HWND hwnd, WORD command, winPrivScreenPtr pScreenPriv)
                         SetWindowPos(hwnd,
                                      HWND_TOPMOST,
                                      0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE);
-#if XWIN_MULTIWINDOW
-                    {
-                        winScreenInfo *pScreenInfo = pScreenPriv->pScreenInfo;
-                        if (pScreenInfo->fMultiWindow)
-                            /* Reflect the changed Z order */
-                            winReorderWindowsMultiWindow();
-                    }
-#endif
                     return TRUE;
 
                 case CMD_RELOAD:
@@ -411,7 +398,6 @@ HandleCustomWM_COMMAND(HWND hwnd, WORD command, winPrivScreenPtr pScreenPriv)
     return FALSE;
 }
 
-#ifdef XWIN_MULTIWINDOW
 /*
  * Add the default or a custom menu depending on the class match
  */
@@ -461,7 +447,6 @@ SetupSysMenu(HWND hwnd)
             MakeMenu(pref.defaultSysMenuName, sys, -1);
     }
 }
-#endif
 
 /*
  * Possibly add a menu to the toolbar icon
@@ -695,8 +680,8 @@ LoadPreferences(void)
     home = getenv("HOME");
     if (home) {
         strcpy(fname, home);
-        if (fname[strlen(fname) - 1] != '/')
-            strcat(fname, "/");
+        if (fname[strlen(fname) - 1] != '\\')
+            strcat(fname, "\\");
         strcat(fname, ".XWinrc");
         parsed = winPrefsLoadPreferences(fname);
     }
@@ -706,7 +691,7 @@ LoadPreferences(void)
         char buffer[MAX_PATH];
 
 #ifdef RELOCATE_PROJECTROOT
-        snprintf(buffer, sizeof(buffer), "%s\\system.XWinrc", winGetBaseDir());
+        snprintf(buffer, sizeof(buffer), "%ssystem.XWinrc", winGetBaseDir());
 #else
         strncpy(buffer, SYSCONFDIR "/X11/system.XWinrc", sizeof(buffer));
 #endif

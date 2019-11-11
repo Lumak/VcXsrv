@@ -33,7 +33,7 @@ typedef struct {
 static bool
 is_color_output(lower_state *state, nir_variable *out)
 {
-   switch (state->shader->stage) {
+   switch (state->shader->info.stage) {
    case MESA_SHADER_VERTEX:
    case MESA_SHADER_GEOMETRY:
       switch (out->data.location) {
@@ -47,19 +47,14 @@ is_color_output(lower_state *state, nir_variable *out)
       }
       break;
    case MESA_SHADER_FRAGMENT:
-      switch (out->data.location) {
-      case FRAG_RESULT_COLOR:
-         return true;
-      default:
-         return false;
-      }
-      break;
+      return (out->data.location == FRAG_RESULT_COLOR ||
+              out->data.location >= FRAG_RESULT_DATA0);
    default:
       return false;
    }
 }
 
-static void
+static bool
 lower_intrinsic(lower_state *state, nir_intrinsic_instr *intr)
 {
    nir_variable *out = NULL;
@@ -67,8 +62,8 @@ lower_intrinsic(lower_state *state, nir_intrinsic_instr *intr)
    nir_ssa_def *s;
 
    switch (intr->intrinsic) {
-   case nir_intrinsic_store_var:
-      out = intr->variables[0]->var;
+   case nir_intrinsic_store_deref:
+      out = nir_deref_instr_get_variable(nir_src_as_deref(intr->src[0]));
       break;
    case nir_intrinsic_store_output:
       /* already had i/o lowered.. lookup the matching output var: */
@@ -82,50 +77,63 @@ lower_intrinsic(lower_state *state, nir_intrinsic_instr *intr)
       assume(out);
       break;
    default:
-      return;
+      return false;
    }
 
    if (out->data.mode != nir_var_shader_out)
-      return;
+      return false;
 
    if (is_color_output(state, out)) {
       b->cursor = nir_before_instr(&intr->instr);
-      s = nir_ssa_for_src(b, intr->src[0], intr->num_components);
+      int src = intr->intrinsic == nir_intrinsic_store_deref ? 1 : 0;
+      s = nir_ssa_for_src(b, intr->src[src], intr->num_components);
       s = nir_fsat(b, s);
-      nir_instr_rewrite_src(&intr->instr, &intr->src[0], nir_src_for_ssa(s));
+      nir_instr_rewrite_src(&intr->instr, &intr->src[src], nir_src_for_ssa(s));
    }
+
+   return true;
 }
 
 static bool
 lower_block(lower_state *state, nir_block *block)
 {
+   bool progress = false;
+
    nir_foreach_instr_safe(instr, block) {
       if (instr->type == nir_instr_type_intrinsic)
-         lower_intrinsic(state, nir_instr_as_intrinsic(instr));
+         progress |= lower_intrinsic(state, nir_instr_as_intrinsic(instr));
    }
 
-   return true;
+   return progress;
 }
-static void
+
+static bool
 lower_impl(lower_state *state, nir_function_impl *impl)
 {
    nir_builder_init(&state->b, impl);
+   bool progress = false;
 
    nir_foreach_block(block, impl) {
-      lower_block(state, block);
+      progress |= lower_block(state, block);
    }
    nir_metadata_preserve(impl, nir_metadata_block_index |
                                nir_metadata_dominance);
+
+   return progress;
 }
 
-void nir_lower_clamp_color_outputs(nir_shader *shader)
+bool
+nir_lower_clamp_color_outputs(nir_shader *shader)
 {
+   bool progress = false;
    lower_state state = {
       .shader = shader,
    };
 
    nir_foreach_function(function, shader) {
       if (function->impl)
-         lower_impl(&state, function->impl);
+         progress |= lower_impl(&state, function->impl);
    }
+
+   return progress;
 }

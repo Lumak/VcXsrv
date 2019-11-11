@@ -28,7 +28,6 @@
 #ifndef ST_CB_BUFFEROBJECTS_H
 #define ST_CB_BUFFEROBJECTS_H
 
-#include "main/compiler.h"
 #include "main/mtypes.h"
 
 struct dd_function_table;
@@ -56,10 +55,8 @@ st_buffer_object(struct gl_buffer_object *obj)
 }
 
 
-extern void
-st_bufferobj_validate_usage(struct st_context *st,
-			    struct st_buffer_object *obj,
-			    unsigned usage);
+enum pipe_transfer_usage
+st_access_flags_to_transfer_flags(GLbitfield access, bool wholeBuffer);
 
 
 extern void

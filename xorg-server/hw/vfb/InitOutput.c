@@ -70,7 +70,7 @@ from The Open Group.
 
 #define VFB_DEFAULT_WIDTH      1280
 #define VFB_DEFAULT_HEIGHT     1024
-#define VFB_DEFAULT_DEPTH         8
+#define VFB_DEFAULT_DEPTH        24
 #define VFB_DEFAULT_WHITEPIXEL    1
 #define VFB_DEFAULT_BLACKPIXEL    0
 #define VFB_DEFAULT_LINEBIAS      0
@@ -201,12 +201,6 @@ ddxGiveUp(enum ExitCode error)
     }
 }
 
-void
-AbortDDX(enum ExitCode error)
-{
-    ddxGiveUp(error);
-}
-
 #ifdef __APPLE__
 void
 DarwinHandleGUI(int argc, char *argv[])
@@ -269,13 +263,6 @@ ddxProcessArgument(int argc, char *argv[], int i)
         currentScreen = &defaultScreenInfo;
     else
         currentScreen = &vfbScreens[lastScreen];
-
-#define CHECK_FOR_REQUIRED_ARGUMENTS(num) \
-    if (((i + num) >= argc) || (!argv[i + num])) {                      \
-      ErrorF("Required argument to %s not specified\n", argv[i]);       \
-      UseMsg();                                                         \
-      FatalError("Required argument to %s not specified\n", argv[i]);   \
-    }
 
     if (strcmp(argv[i], "-screen") == 0) {      /* -screen n WxHxD */
         int screenNum;
@@ -459,12 +446,6 @@ vfbStoreColors(ColormapPtr pmap, int ndef, xColorItem * pdefs)
             swapcopy16(pXWDCmap[pdefs[i].pixel].blue, pdefs[i].blue);
         }
     }
-}
-
-static Bool
-vfbSaveScreen(ScreenPtr pScreen, int on)
-{
-    return TRUE;
 }
 
 #ifdef HAVE_MMAP
@@ -935,8 +916,6 @@ vfbScreenInit(ScreenPtr pScreen, int argc, char **argv)
        return FALSE;
 
     pScreen->InstallColormap = vfbInstallColormap;
-
-    pScreen->SaveScreen = vfbSaveScreen;
     pScreen->StoreColors = vfbStoreColors;
 
     miDCInitialize(pScreen, &vfbPointerCursorFuncs);
@@ -957,26 +936,11 @@ vfbScreenInit(ScreenPtr pScreen, int argc, char **argv)
 
 }                               /* end vfbScreenInit */
 
-static const ExtensionModule vfbExtensions[] = {
-#ifdef GLXEXT
-    { GlxExtensionInit, "GLX", &noGlxExtension },
-#endif
-};
-
-static
-void vfbExtensionInit(void)
-{
-    LoadExtensionList(vfbExtensions, ARRAY_SIZE(vfbExtensions), TRUE);
-}
-
 void
 InitOutput(ScreenInfo * screen_info, int argc, char **argv)
 {
     int i;
     int NumFormats = 0;
-
-    if (serverGeneration == 1)
-        vfbExtensionInit();
 
     /* initialize pixmap formats */
 
@@ -1001,6 +965,8 @@ InitOutput(ScreenInfo * screen_info, int argc, char **argv)
 #endif
         vfbPixmapDepths[32] = TRUE;
     }
+
+    xorgGlxCreateVendor();
 
     for (i = 1; i <= 32; i++) {
         if (vfbPixmapDepths[i]) {

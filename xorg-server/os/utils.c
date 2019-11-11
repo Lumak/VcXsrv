@@ -86,19 +86,7 @@ __stdcall unsigned long GetTickCount(void);
 #include <X11/fonts/libxfont2.h>
 #include "osdep.h"
 #include "extension.h"
-#ifdef X_POSIX_C_SOURCE
-#define _POSIX_C_SOURCE X_POSIX_C_SOURCE
 #include <signal.h>
-#undef _POSIX_C_SOURCE
-#else
-#if defined(_POSIX_SOURCE)
-#include <signal.h>
-#else
-#define _POSIX_SOURCE
-#include <signal.h>
-#undef _POSIX_SOURCE
-#endif
-#endif
 #ifndef WIN32
 #include <sys/wait.h>
 #endif
@@ -138,6 +126,7 @@ Bool noDamageExtension = FALSE;
 Bool noDbeExtension = FALSE;
 #endif
 #ifdef DPMSExtension
+#include "dpmsproc.h"
 Bool noDPMSExtension = FALSE;
 #endif
 #ifdef GLXEXT
@@ -210,6 +199,7 @@ char *SeatId = NULL;
 #ifdef _MSC_VER
 static HANDLE s_hSmartScheduleTimer = NULL;
 static HANDLE s_hSmartScheduleTimerQueue = NULL;
+static CRITICAL_SECTION timerCriticalSection;
 #endif
 
 #if defined(SVR4) || defined(__linux__) || defined(CSRG_BASED)
@@ -336,7 +326,7 @@ LockServer(void)
     }
     if (lfd < 0)
         FatalError("Could not create lock file in %s\n", tmp);
-    snprintf(pid_str, sizeof(pid_str), "%10ld\n", (long) getpid());
+    snprintf(pid_str, sizeof(pid_str), "%10lu\n", (unsigned long) getpid());
     if (write(lfd, pid_str, 11) != 11)
         FatalError("Could not write pid to lock file in %s\n", tmp);
     (void) fchmod(lfd, 0444);
@@ -527,7 +517,7 @@ GetTimeInMicros(void)
 #endif
 
     X_GETTIMEOFDAY(&tv);
-    return (CARD64) tv.tv_sec * (CARD64)1000000000 + (CARD64) tv.tv_usec * 1000;
+    return (CARD64) tv.tv_sec * (CARD64)1000000 + (CARD64) tv.tv_usec;
 }
 #endif
 
@@ -597,7 +587,6 @@ UseMsg(void)
     ErrorF("-terminate             terminate at server reset\n");
     ErrorF("-to #                  connection time out\n");
     ErrorF("-tst                   disable testing extensions\n");
-    ErrorF("-wm                    WhenMapped default backing-store\n");
     ErrorF("-wr                    create root window with white background\n");
 #ifdef PANORAMIX
     ErrorF("+xinerama              Enable XINERAMA extension\n");
@@ -976,8 +965,6 @@ ProcessCommandLine(int argc, char *argv[])
         else if (strcmp(argv[i], "-tst") == 0) {
             noTestExtensions = TRUE;
         }
-        else if (strcmp(argv[i], "-wm") == 0)
-            defaultBackingStore = WhenMapped;
         else if (strcmp(argv[i], "-wr") == 0)
             whiteRoot = TRUE;
         else if (strcmp(argv[i], "-background") == 0) {
@@ -1029,7 +1016,7 @@ ProcessCommandLine(int argc, char *argv[])
 #endif
         else if (strcmp(argv[i], "-dumbSched") == 0) {
             InputThreadEnable = FALSE;
-#if HAVE_SETITIMER
+#ifdef HAVE_SETITIMER
             SmartScheduleSignalEnable = FALSE;
 #endif
         }
@@ -1228,12 +1215,17 @@ XNFstrdup(const char *s)
 void
 SmartScheduleStopTimer(void)
 {
-#if HAVE_SETITIMER
+#ifdef HAVE_SETITIMER
 #ifdef _MSC_VER
     if (!SmartScheduleSignalEnable)
         return;
-    DeleteTimerQueueTimer(s_hSmartScheduleTimerQueue, s_hSmartScheduleTimer, NULL);
-    s_hSmartScheduleTimer=NULL;
+    EnterCriticalSection(&timerCriticalSection);
+    if (s_hSmartScheduleTimer)
+    {
+      DeleteTimerQueueTimer(s_hSmartScheduleTimerQueue, s_hSmartScheduleTimer, NULL);
+      s_hSmartScheduleTimer=NULL;
+    }
+    LeaveCriticalSection(&timerCriticalSection);
 #else
     struct itimerval timer;
 
@@ -1255,20 +1247,30 @@ static VOID CALLBACK SmartScheduleTimer( PVOID lpParameter, BOOLEAN TimerOrWaitF
 void
 SmartScheduleStartTimer(void)
 {
-#if HAVE_SETITIMER
+#ifdef HAVE_SETITIMER
 #ifdef _MSC_VER
     if (!SmartScheduleSignalEnable)
         return;
 
+    EnterCriticalSection(&timerCriticalSection);
+    if (s_hSmartScheduleTimer)
+    {
+        LeaveCriticalSection(&timerCriticalSection);
+        return;
+    }
+
     if (!CreateTimerQueueTimer( &s_hSmartScheduleTimer, s_hSmartScheduleTimerQueue, SmartScheduleTimer, NULL
-                              , SmartScheduleInterval, SmartScheduleInterval, WT_EXECUTEONLYONCE|WT_EXECUTEINPERSISTENTTHREAD))
+                              , SmartScheduleInterval, SmartScheduleInterval, 0))
     {
         DWORD Error=GetLastError();
         ErrorF("Error starting timer, smart scheduling disabled: 0x%x (%d)\n",Error,Error);
         CloseHandle(s_hSmartScheduleTimer);
+        s_hSmartScheduleTimer=NULL;
         SmartScheduleSignalEnable = FALSE;
+        LeaveCriticalSection(&timerCriticalSection);
         return;
     }
+    LeaveCriticalSection(&timerCriticalSection);
 #else
     struct itimerval timer;
 
@@ -1282,7 +1284,7 @@ SmartScheduleStartTimer(void)
 #endif
 #endif
 }
-#if HAVE_SETITIMER
+#ifdef HAVE_SETITIMER
 #ifdef _MSC_VER
 static VOID CALLBACK SmartScheduleTimer( PVOID lpParameter, BOOLEAN TimerOrWaitFired)
 #else
@@ -1307,6 +1309,10 @@ SmartScheduleEnable(void)
         ErrorF("Error creating timer, smart scheduling disabled: 0x%x (%d)\n",Error,Error);
         SmartScheduleSignalEnable = FALSE;
     }
+    else
+    {
+        InitializeCriticalSection(&timerCriticalSection);
+    }
 #else
     struct sigaction act;
 
@@ -1325,6 +1331,7 @@ SmartScheduleEnable(void)
     return ret;
 }
 
+#if !defined(WIN32)
 static int
 SmartSchedulePause(void)
 {
@@ -1347,11 +1354,12 @@ SmartSchedulePause(void)
     return ret;
 }
 #endif
+#endif
 
 void
 SmartScheduleInit(void)
 {
-#if HAVE_SETITIMER
+#ifdef HAVE_SETITIMER
     if (SmartScheduleEnable() < 0) {
         perror("sigaction for smart scheduler");
         SmartScheduleSignalEnable = FALSE;
@@ -1416,6 +1424,12 @@ OsAbort(void)
 {
 #ifndef __APPLE__
     OsBlockSignals();
+#endif
+#if !defined(WIN32) || defined(__CYGWIN__)
+    /* abort() raises SIGABRT, so we have to stop handling that to prevent
+     * recursion
+     */
+    OsSignal(SIGABRT, SIG_DFL);
 #endif
     abort();
 }
@@ -1502,7 +1516,7 @@ Popen(const char *command, const char *type)
     }
 
     /* Ignore the smart scheduler while this is going on */
-#if HAVE_SETITIMER
+#ifdef HAVE_SETITIMER
     if (SmartSchedulePause() < 0) {
         close(pdes[0]);
         close(pdes[1]);
@@ -1517,7 +1531,7 @@ Popen(const char *command, const char *type)
         close(pdes[0]);
         close(pdes[1]);
         free(cur);
-#if HAVE_SETITIMER
+#ifdef HAVE_SETITIMER
         if (SmartScheduleEnable() < 0)
             perror("signal");
 #endif
@@ -1694,7 +1708,7 @@ Pclose(void *iop)
     /* allow EINTR again */
     OsReleaseSignals();
 
-#if HAVE_SETITIMER
+#ifdef HAVE_SETITIMER
     if (SmartScheduleEnable() < 0) {
         perror("signal");
         return -1;
@@ -1789,6 +1803,69 @@ System(const char *cmdline)
 }
 #endif
 
+Bool
+PrivsElevated(void)
+{
+    static Bool privsTested = FALSE;
+    static Bool privsElevated = TRUE;
+
+    if (!privsTested) {
+#if defined(WIN32)
+        privsElevated = FALSE;
+#else
+        if ((getuid() != geteuid()) || (getgid() != getegid())) {
+            privsElevated = TRUE;
+        }
+        else {
+#if defined(HAVE_ISSETUGID)
+            privsElevated = issetugid();
+#elif defined(HAVE_GETRESUID)
+            uid_t ruid, euid, suid;
+            gid_t rgid, egid, sgid;
+
+            if ((getresuid(&ruid, &euid, &suid) == 0) &&
+                (getresgid(&rgid, &egid, &sgid) == 0)) {
+                privsElevated = (euid != suid) || (egid != sgid);
+            }
+            else {
+                printf("Failed getresuid or getresgid");
+                /* Something went wrong, make defensive assumption */
+                privsElevated = TRUE;
+            }
+#else
+            if (getuid() == 0) {
+                /* running as root: uid==euid==0 */
+                privsElevated = FALSE;
+            }
+            else {
+                /*
+                 * If there are saved ID's the process might still be privileged
+                 * even though the above test succeeded. If issetugid() and
+                 * getresgid() aren't available, test this by trying to set
+                 * euid to 0.
+                 */
+                unsigned int oldeuid;
+
+                oldeuid = geteuid();
+
+                if (seteuid(0) != 0) {
+                    privsElevated = FALSE;
+                }
+                else {
+                    if (seteuid(oldeuid) != 0) {
+                        FatalError("Failed to drop privileges.  Exiting\n");
+                    }
+                    privsElevated = TRUE;
+                }
+            }
+#endif
+        }
+#endif
+        privsTested = TRUE;
+    }
+    return privsElevated;
+}
+
 /*
  * CheckUserParameters: check for long command line arguments and long
  * environment variables.  By default, these checks are only done when
@@ -1870,7 +1947,7 @@ CheckUserParameters(int argc, char **argv, char **envp)
     char *a, *e = NULL;
 
 #if CHECK_EUID
-    if (geteuid() == 0 && getuid() != geteuid())
+    if (PrivsElevated())
 #endif
     {
         /* Check each argv[] */

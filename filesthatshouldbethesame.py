@@ -70,24 +70,28 @@ libXau/include/X11/Xauth.h                        X11/Xauth.h
 
 libXdmcp/include/X11/Xdmcp.h                      X11/Xdmcp.h
 
-include/xcb/xcbext.h                              libxcb/src/xcbext.h
-include/xcb/render.h                              libxcb/src/render.h
-include/xcb/xcb.h                                 libxcb/src/xcb.h
-include/xcb/xc_misc.h                             libxcb/src/xc_misc.h
-include/xcb/bigreq.h                              libxcb/src/bigreq.h
-include/xcb/xproto.h                              libxcb/src/xproto.h
-include/xcb/xcb_windefs.h                         libxcb/src/xcb_windefs.h
-include/xcb/shape.h                               libxcb/src/shape.h
-include/xcb/xcb_icccm.h                           libxcb/src/xcb_icccm.h
-include/xcb/xcb_aux.h                             libxcb/src/xcb_aux.h
-include/xcb/xcb_ewmh.h                            libxcb/src/xcb_ewmh.h
+libxcb/src/xcbext.h                               include/xcb/xcbext.h
+libxcb/src/render.h                               include/xcb/render.h
+libxcb/src/xcb.h                                  include/xcb/xcb.h
+libxcb/src/xc_misc.h                              include/xcb/xc_misc.h
+libxcb/src/bigreq.h                               include/xcb/bigreq.h
+libxcb/src/xproto.h                               include/xcb/xproto.h
+libxcb/src/composite.h                            include/xcb/composite.h
+libxcb/src/xfixes.h                               include/xcb/xfixes.h
+libxcb/src/xcb_windefs.h                          include/xcb/xcb_windefs.h
+libxcb/src/shape.h                                include/xcb/shape.h
+libxcb/src/xcb_icccm.h                            include/xcb/xcb_icccm.h
+libxcb/src/xcb_aux.h                              include/xcb/xcb_aux.h
+libxcb/src/xcb_ewmh.h                             include/xcb/xcb_ewmh.h
 
-gl/glext.h                                        mesalib/include/gl/glext.h
-gl/glx.h                                          mesalib/include/gl/glx.h
-gl/glxext.h                                       mesalib/include/gl/glxext.h
-gl/glx_mangle.h                                   mesalib/include/gl/glx_mangle.h
-gl/gl_mangle.h                                    mesalib/include/gl/gl_mangle.h
-gl/internal/dri_interface.h                       mesalib/include/gl/internal/dri_interface.h
+xcb-util-errors/src/xcb_errors.h                  include/xcb/xcb_errors.h
+
+mesalib/include/gl/glext.h                        gl/glext.h
+mesalib/include/gl/glx.h                          gl/glx.h
+mesalib/include/gl/glxext.h                       gl/glxext.h
+mesalib/include/gl/glx_mangle.h                   gl/glx_mangle.h
+mesalib/include/gl/gl_mangle.h                    gl/gl_mangle.h
+mesalib/include/gl/internal/dri_interface.h       gl/internal/dri_interface.h
 
 mesalib/include/c99_compat.h                      include/c99_compat.h
 mesalib/include/no_extern_c.h                     include/no_extern_c.h
@@ -95,11 +99,13 @@ mesalib/include/no_extern_c.h                     include/no_extern_c.h
 xorg-server/hw/xwin/glx/wglext.h                  mesalib/include/GL/wglext.h
 
 mesalib/src/mapi/glapi/glapi.h                      xorg-server/glx/glapi.h
-mesalib/src/mapi/glapi/gen/glapitable.h             mesalib/src/mesa/main/glapitable.h
 mesalib/src/util/macros.h                           xorg-server/glx/util/macros.h
-mesalib/src/mesa/main/glapitable.h                  xorg-server/glx/glapitable.h
+mesalib/src/mapi/glapi/glapitable.h                 xorg-server/glx/glapitable.h
+mesalib/src/mapi/glapi/gen/remap_helper.h           xorg-server/glx/remap_helper.h
+mesalib/src/mesa/main/remap_helper.h                xorg-server/glx/remap_helper.h
 mesalib/src/mapi/glapi/gen/glprocs.h                xorg-server/glx/glprocs.h
 mesalib/src/mapi/glapi/gen/dispatch.h               xorg-server/glx/dispatch.h
+mesalib/src/mapi/glapi/gen/dispatch.h               mesalib/src/mesa/main/dispatch.h
 mesalib/src/mapi/glapi/gen/indirect_dispatch.c      xorg-server/glx/indirect_dispatch.c
 mesalib/src/mapi/glapi/gen/indirect_dispatch.h      xorg-server/glx/indirect_dispatch.h
 mesalib/src/mapi/glapi/gen/indirect_dispatch_swap.c xorg-server/glx/indirect_dispatch_swap.c
@@ -109,8 +115,6 @@ mesalib/src/mapi/glapi/gen/indirect_size.h          xorg-server/glx/indirect_siz
 mesalib/src/mapi/glapi/gen/indirect_size_get.c      xorg-server/glx/indirect_size_get.c
 mesalib/src/mapi/glapi/gen/indirect_size_get.h      xorg-server/glx/indirect_size_get.h
 mesalib/src/mapi/glapi/gen/indirect_table.c         xorg-server/glx/indirect_table.c
-mesalib/src/mapi/glapi/gen/remap_helper.h           mesalib/src/mesa/main/remap_helper.h
-mesalib/src/mapi/glapi/gen/remap_helper.h           xorg-server/glx/remap_helper.h
 mesalib/src/mapi/glapi/gen/glfunctions.h            xorg-server/glx/glfunctions.h
 
 libXaw/include/X11/Xaw/AllWidgets.h               X11/Xaw/AllWidgets.h
@@ -220,6 +224,8 @@ libXfixes/include/X11/extensions/Xfixes.h         X11/extensions/Xfixes.h
 libXfont2/include/X11/fonts/fntfil.h              X11/fonts/fntfil.h
 libXfont2/include/X11/fonts/fontmisc.h            X11/fonts/fontmisc.h
 libXfont2/include/X11/fonts/libxfont2.h           X11/fonts/libxfont2.h
+libXfont2/include/X11/fonts/bufio.h               X11/fonts/bufio.h
+
 
 xorg-server/hw/xwin/glx/gl.xml                    mesalib/src/mapi/glapi/registry/gl.xml
 """

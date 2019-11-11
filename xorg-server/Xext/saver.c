@@ -59,6 +59,7 @@ in this Software without prior written authorization from the X Consortium.
 #endif
 #ifdef DPMSExtension
 #include <X11/extensions/dpmsconst.h>
+#include "dpmsproc.h"
 #endif
 #include "protocol-versions.h"
 
@@ -418,20 +419,21 @@ SendScreenSaverNotify(ScreenPtr pScreen, int state, Bool forced)
         kind = ScreenSaverInternal;
     for (pEv = pPriv->events; pEv; pEv = pEv->next) {
         if (pEv->mask & mask) {
-            xScreenSaverNotifyEvent ev;
-            ev.type = ScreenSaverNotify + ScreenSaverEventBase;
-            ev.state = state;
-            ev.timestamp = currentTime.milliseconds;
-            ev.root = pScreen->root->drawable.id;
-            ev.window = pScreen->screensaver.wid;
-            ev.kind = kind;
-            ev.forced = forced;
+            xScreenSaverNotifyEvent ev = {
+                .type = ScreenSaverNotify + ScreenSaverEventBase,
+                .state = state,
+                .timestamp = currentTime.milliseconds,
+                .root = pScreen->root->drawable.id,
+                .window = pScreen->screensaver.wid,
+                .kind = kind,
+                .forced = forced
+            };
             WriteEventsToClient(pEv->client, 1, (xEvent *) &ev);
         }
     }
 }
 
-static void
+static void _X_COLD
 SScreenSaverNotifyEvent(xScreenSaverNotifyEvent * from,
                         xScreenSaverNotifyEvent * to)
 {
@@ -615,14 +617,16 @@ ScreenSaverHandle(ScreenPtr pScreen, int xstate, Bool force)
 static int
 ProcScreenSaverQueryVersion(ClientPtr client)
 {
-    xScreenSaverQueryVersionReply rep;
+    xScreenSaverQueryVersionReply rep = {
+        .type = X_Reply,
+        .sequenceNumber = client->sequence,
+        .length = 0,
+        .majorVersion = SERVER_SAVER_MAJOR_VERSION,
+        .minorVersion = SERVER_SAVER_MINOR_VERSION
+    };
 
     REQUEST_SIZE_MATCH(xScreenSaverQueryVersionReq);
-    rep.type = X_Reply;
-    rep.length = 0;
-    rep.sequenceNumber = client->sequence;
-    rep.majorVersion = SERVER_SAVER_MAJOR_VERSION;
-    rep.minorVersion = SERVER_SAVER_MINOR_VERSION;
+
     if (client->swapped) {
         swaps(&rep.sequenceNumber);
         swapl(&rep.length);
@@ -658,12 +662,12 @@ ProcScreenSaverQueryInfo(ClientPtr client)
     UpdateCurrentTime();
     lastInput = GetTimeInMillis() - LastEventTime(XIAllDevices).milliseconds;
 
-
-    rep.type = X_Reply;
-    rep.sequenceNumber = client->sequence;
-    rep.length = 0;
-    rep.window = pSaver->wid;
-
+    rep = (xScreenSaverQueryInfoReply) {
+        .type = X_Reply,
+        .sequenceNumber = client->sequence,
+        .length = 0,
+        .window = pSaver->wid
+    };
     if (screenIsSaved != SCREEN_SAVER_OFF) {
         rep.state = ScreenSaverOn;
         if (ScreenSaverTime)
@@ -1188,6 +1192,8 @@ ProcScreenSaverUnsetAttributes(ClientPtr client)
         PanoramiXRes *draw;
         int rc, i;
 
+        REQUEST_SIZE_MATCH(xScreenSaverUnsetAttributesReq);
+
         rc = dixLookupResourceByClass((void **) &draw, stuff->drawable,
                                       XRC_DRAWABLE, client, DixWriteAccess);
         if (rc != Success)
@@ -1209,9 +1215,18 @@ static int
 ProcScreenSaverSuspend(ClientPtr client)
 {
     ScreenSaverSuspensionPtr *prev, this;
+    BOOL suspend;
 
     REQUEST(xScreenSaverSuspendReq);
     REQUEST_SIZE_MATCH(xScreenSaverSuspendReq);
+
+    /*
+     * Old versions of XCB encode suspend as 1 byte followed by three
+     * pad bytes (which are always cleared), instead of a 4 byte
+     * value. Be compatible by just checking for a non-zero value in
+     * all 32-bits.
+     */
+    suspend = stuff->suspend != 0;
 
     /* Check if this client is suspending the screensaver */
     for (prev = &suspendingClients; (this = *prev); prev = &this->next)
@@ -1219,7 +1234,7 @@ ProcScreenSaverSuspend(ClientPtr client)
             break;
 
     if (this) {
-        if (stuff->suspend == TRUE)
+        if (suspend == TRUE)
             this->count++;
         else if (--this->count == 0)
             FreeResource(this->clientResource, RT_NONE);
@@ -1228,7 +1243,7 @@ ProcScreenSaverSuspend(ClientPtr client)
     }
 
     /* If we get to this point, this client isn't suspending the screensaver */
-    if (stuff->suspend == FALSE)
+    if (suspend == FALSE)
         return Success;
 
     /*
@@ -1268,19 +1283,17 @@ ProcScreenSaverQueryVersion,
         ProcScreenSaverSetAttributes,
         ProcScreenSaverUnsetAttributes, ProcScreenSaverSuspend,};
 
-#define NUM_REQUESTS	((sizeof NormalVector) / (sizeof NormalVector[0]))
-
 static int
 ProcScreenSaverDispatch(ClientPtr client)
 {
     REQUEST(xReq);
 
-    if (stuff->data < NUM_REQUESTS)
+    if (stuff->data < ARRAY_SIZE(NormalVector))
         return (*NormalVector[stuff->data]) (client);
     return BadRequest;
 }
 
-static int
+static int _X_COLD
 SProcScreenSaverQueryVersion(ClientPtr client)
 {
     REQUEST(xScreenSaverQueryVersionReq);
@@ -1289,7 +1302,7 @@ SProcScreenSaverQueryVersion(ClientPtr client)
     return ProcScreenSaverQueryVersion(client);
 }
 
-static int
+static int _X_COLD
 SProcScreenSaverQueryInfo(ClientPtr client)
 {
     REQUEST(xScreenSaverQueryInfoReq);
@@ -1299,7 +1312,7 @@ SProcScreenSaverQueryInfo(ClientPtr client)
     return ProcScreenSaverQueryInfo(client);
 }
 
-static int
+static int _X_COLD
 SProcScreenSaverSelectInput(ClientPtr client)
 {
     REQUEST(xScreenSaverSelectInputReq);
@@ -1310,7 +1323,7 @@ SProcScreenSaverSelectInput(ClientPtr client)
     return ProcScreenSaverSelectInput(client);
 }
 
-static int
+static int _X_COLD
 SProcScreenSaverSetAttributes(ClientPtr client)
 {
     REQUEST(xScreenSaverSetAttributesReq);
@@ -1328,7 +1341,7 @@ SProcScreenSaverSetAttributes(ClientPtr client)
     return ProcScreenSaverSetAttributes(client);
 }
 
-static int
+static int _X_COLD
 SProcScreenSaverUnsetAttributes(ClientPtr client)
 {
     REQUEST(xScreenSaverUnsetAttributesReq);
@@ -1338,12 +1351,13 @@ SProcScreenSaverUnsetAttributes(ClientPtr client)
     return ProcScreenSaverUnsetAttributes(client);
 }
 
-static int
+static int _X_COLD
 SProcScreenSaverSuspend(ClientPtr client)
 {
     REQUEST(xScreenSaverSuspendReq);
 
     swaps(&stuff->length);
+    swapl(&stuff->suspend);
     REQUEST_SIZE_MATCH(xScreenSaverSuspendReq);
     return ProcScreenSaverSuspend(client);
 }
@@ -1355,12 +1369,12 @@ SProcScreenSaverQueryVersion,
         SProcScreenSaverSetAttributes,
         SProcScreenSaverUnsetAttributes, SProcScreenSaverSuspend,};
 
-static int
+static int _X_COLD
 SProcScreenSaverDispatch(ClientPtr client)
 {
     REQUEST(xReq);
 
-    if (stuff->data < NUM_REQUESTS)
+    if (stuff->data < ARRAY_SIZE(NormalVector))
         return (*SwappedVector[stuff->data]) (client);
     return BadRequest;
 }

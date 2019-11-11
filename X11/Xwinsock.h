@@ -1,3 +1,6 @@
+#ifndef __XWINSOCK_H__
+#define __XWINSOCK_H__
+
 /*
 
 Copyright 1996, 1998  The Open Group
@@ -34,7 +37,7 @@ The Open Group.
  */
 
 #undef _XFree86Server
-#ifdef XFree86Server 
+#ifdef XFree86Server
 # define _XFree86Server
 # undef XFree86Server
 #endif
@@ -58,6 +61,16 @@ The Open Group.
 #define ATOM wATOM
 #define BYTE wBYTE
 #define FreeResource wFreeResource
+#ifdef None
+#pragma push_macro("None")
+#define NoneDefined
+#undef None
+#endif
+#ifdef ControlMask
+#pragma push_macro("ControlMask")
+#define ControlMaskDefined
+#undef ControlMask
+#endif
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #undef Status
@@ -70,6 +83,14 @@ typedef int Status;
 #undef CreateWindowA
 #undef RT_FONT
 #undef RT_CURSOR
+#ifdef NoneDefined
+#pragma pop_macro("None")
+#undef NoneDefined
+#endif
+#ifdef ControlMaskDefined
+#pragma pop_macro("ControlMask")
+#undef ControlMaskDefined
+#endif
 
 /*
  * Older version of this header used to name the windows API bool type wBOOL,
@@ -77,8 +98,14 @@ typedef int Status;
  */
 #define wBOOL WINBOOL
 
+#if defined(WIN32) && (!defined(PATH_MAX) || PATH_MAX < 1024)
+# undef PATH_MAX
+# define PATH_MAX 1024
+#endif
+
 #ifdef _XFree86Server
 # define XFree86Server
 # undef _XFree86Server
 #endif
 
+#endif

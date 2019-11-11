@@ -41,6 +41,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <assert.h>
+#include "c99_compat.h"
 
 
 struct list_head
@@ -71,7 +72,7 @@ static inline void list_addtail(struct list_head *item, struct list_head *list)
     list->prev = item;
 }
 
-static inline bool list_empty(struct list_head *list);
+static inline bool list_empty(const struct list_head *list);
 
 static inline void list_replace(struct list_head *from, struct list_head *to)
 {
@@ -100,7 +101,7 @@ static inline void list_delinit(struct list_head *item)
     item->prev = item;
 }
 
-static inline bool list_empty(struct list_head *list)
+static inline bool list_empty(const struct list_head *list)
 {
    return list->next == list;
 }
@@ -110,10 +111,10 @@ static inline bool list_empty(struct list_head *list)
  */
 static inline bool list_is_singular(const struct list_head *list)
 {
-   return list->next != NULL && list->next->next == list;
+   return list->next != NULL && list->next != list && list->next->next == list;
 }
 
-static inline unsigned list_length(struct list_head *list)
+static inline unsigned list_length(const struct list_head *list)
 {
    struct list_head *node;
    unsigned length = 0;
@@ -144,7 +145,7 @@ static inline void list_splicetail(struct list_head *src, struct list_head *dst)
    dst->prev = src->prev;
 }
 
-static inline void list_validate(struct list_head *list)
+static inline void list_validate(const struct list_head *list)
 {
    struct list_head *node;
    assert(list->next->prev == list && list->prev->next == list);

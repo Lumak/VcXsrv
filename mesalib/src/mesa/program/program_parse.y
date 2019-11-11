@@ -27,6 +27,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "main/errors.h"
 #include "main/mtypes.h"
 #include "main/imports.h"
 #include "program/program.h"
@@ -38,6 +39,8 @@
 #include "program/symbol_table.h"
 #include "program/program_parser.h"
 
+#include "util/u_math.h"
+
 extern void *yy_scan_string(char *);
 extern void yy_delete_buffer(void *);
 
@@ -45,13 +48,13 @@ static struct asm_symbol *declare_variable(struct asm_parser_state *state,
     char *name, enum asm_type t, struct YYLTYPE *locp);
 
 static int add_state_reference(struct gl_program_parameter_list *param_list,
-    const gl_state_index tokens[STATE_LENGTH]);
+    const gl_state_index16 tokens[STATE_LENGTH]);
 
 static int initialize_symbol_from_state(struct gl_program *prog,
-    struct asm_symbol *param_var, const gl_state_index tokens[STATE_LENGTH]);
+    struct asm_symbol *param_var, const gl_state_index16 tokens[STATE_LENGTH]);
 
 static int initialize_symbol_from_param(struct gl_program *prog,
-    struct asm_symbol *param_var, const gl_state_index tokens[STATE_LENGTH]);
+    struct asm_symbol *param_var, const gl_state_index16 tokens[STATE_LENGTH]);
 
 static int initialize_symbol_from_const(struct gl_program *prog,
     struct asm_symbol *param_var, const struct asm_vector *vec,
@@ -136,7 +139,7 @@ static struct asm_instruction *asm_instruction_copy_ctor(
    unsigned attrib;
    int integer;
    float real;
-   gl_state_index state[STATE_LENGTH];
+   gl_state_index16 state[STATE_LENGTH];
    int negate;
    struct asm_vector vector;
    enum prog_opcode opcode;
@@ -186,7 +189,6 @@ static struct asm_instruction *asm_instruction_copy_ctor(
 %token TEX_SHADOW1D TEX_SHADOW2D TEX_SHADOWRECT
 %token TEX_ARRAY1D TEX_ARRAY2D TEX_ARRAYSHADOW1D TEX_ARRAYSHADOW2D 
 %token VERTEX VTXATTRIB
-%token WEIGHT
 
 %token <string> IDENTIFIER USED_IDENTIFIER
 %type <string> string
@@ -348,7 +350,7 @@ statement: instruction ';'
 	      state->inst_tail = $1;
 	      $1->next = NULL;
 
-	      state->prog->NumInstructions++;
+              state->prog->arb.NumInstructions++;
 	   }
 	}
 	| namingStatement ';'
@@ -357,12 +359,12 @@ statement: instruction ';'
 instruction: ALU_instruction
 	{
 	   $$ = $1;
-	   state->prog->NumAluInstructions++;
+           state->prog->arb.NumAluInstructions++;
 	}
 	| TexInstruction
 	{
 	   $$ = $1;
-	   state->prog->NumTexInstructions++;
+           state->prog->arb.NumTexInstructions++;
 	}
 	;
 
@@ -388,8 +390,6 @@ ARL_instruction: ARL maskedAddrReg ',' scalarSrcReg
 
 VECTORop_instruction: VECTOR_OP maskedDstReg ',' swizzleSrcReg
 	{
-	   if ($1.Opcode == OPCODE_DDY)
-	      state->fragment.UsesDFdy = 1;
 	   $$ = asm_instruction_copy_ctor(& $1, & $2, & $4, NULL, NULL);
 	}
 	;
@@ -596,7 +596,7 @@ maskedDstReg: dstReg optionalMask
 		 YYERROR;
 	      }
 
-	      state->prog->OutputsWritten |= BITFIELD64_BIT($$.Index);
+              state->prog->info.outputs_written |= BITFIELD64_BIT($$.Index);
 	   }
 	}
 	;
@@ -726,7 +726,7 @@ extSwizSel: INTEGER
 srcReg: USED_IDENTIFIER /* temporaryReg | progParamSingle */
 	{
 	   struct asm_symbol *const s = (struct asm_symbol *)
-	      _mesa_symbol_table_find_symbol(state->st, 0, $1);
+              _mesa_symbol_table_find_symbol(state->st, $1);
 
 	   free($1);
 
@@ -754,7 +754,7 @@ srcReg: USED_IDENTIFIER /* temporaryReg | progParamSingle */
 	      break;
 	   case at_attrib:
 	      set_src_reg(& $$, PROGRAM_INPUT, s->attrib_binding);
-	      state->prog->InputsRead |= BITFIELD64_BIT($$.Base.Index);
+              state->prog->info.inputs_read |= BITFIELD64_BIT($$.Base.Index);
 
 	      if (!validate_inputs(& @1, state)) {
 		 YYERROR;
@@ -769,7 +769,7 @@ srcReg: USED_IDENTIFIER /* temporaryReg | progParamSingle */
 	| attribBinding
 	{
 	   set_src_reg(& $$, PROGRAM_INPUT, $1);
-	   state->prog->InputsRead |= BITFIELD64_BIT($$.Base.Index);
+           state->prog->info.inputs_read |= BITFIELD64_BIT($$.Base.Index);
 
 	   if (!validate_inputs(& @1, state)) {
 	      YYERROR;
@@ -787,7 +787,7 @@ srcReg: USED_IDENTIFIER /* temporaryReg | progParamSingle */
 	   $$.Base.File = $1->param_binding_type;
 
 	   if ($3.Base.RelAddr) {
-              state->prog->IndirectRegisterFiles |= (1 << $$.Base.File);
+              state->prog->arb.IndirectRegisterFiles |= (1 << $$.Base.File);
 	      $1->param_accessed_indirectly = 1;
 
 	      $$.Base.RelAddr = 1;
@@ -814,7 +814,7 @@ dstReg: resultBinding
 	| USED_IDENTIFIER /* temporaryReg | vertexResultReg */
 	{
 	   struct asm_symbol *const s = (struct asm_symbol *)
-	      _mesa_symbol_table_find_symbol(state->st, 0, $1);
+              _mesa_symbol_table_find_symbol(state->st, $1);
 
 	   free($1);
 
@@ -843,7 +843,7 @@ dstReg: resultBinding
 progParamArray: USED_IDENTIFIER
 	{
 	   struct asm_symbol *const s = (struct asm_symbol *)
-	      _mesa_symbol_table_find_symbol(state->st, 0, $1);
+              _mesa_symbol_table_find_symbol(state->st, $1);
 
 	   free($1);
 
@@ -916,7 +916,7 @@ addrRegNegOffset: INTEGER
 addrReg: USED_IDENTIFIER
 	{
 	   struct asm_symbol *const s = (struct asm_symbol *)
-	      _mesa_symbol_table_find_symbol(state->st, 0, $1);
+              _mesa_symbol_table_find_symbol(state->st, $1);
 
 	   free($1);
 
@@ -1009,10 +1009,6 @@ vtxAttribItem: POSITION
 	{
 	   $$ = VERT_ATTRIB_POS;
 	}
-	| WEIGHT vtxOptWeightNum
-	{
-	   $$ = VERT_ATTRIB_WEIGHT;
-	}
 	| NORMAL
 	{
 	   $$ = VERT_ATTRIB_NORMAL;
@@ -1051,7 +1047,6 @@ vtxAttribNum: INTEGER
 	}
 	;
 
-vtxOptWeightNum:  | '[' vtxWeightNum ']';
 vtxWeightNum: INTEGER;
 
 fragAttribItem: POSITION
@@ -2030,9 +2025,9 @@ legacyTexUnitNum: INTEGER
 ALIAS_statement: ALIAS IDENTIFIER '=' USED_IDENTIFIER
 	{
 	   struct asm_symbol *exist = (struct asm_symbol *)
-	      _mesa_symbol_table_find_symbol(state->st, 0, $2);
+              _mesa_symbol_table_find_symbol(state->st, $2);
 	   struct asm_symbol *target = (struct asm_symbol *)
-	      _mesa_symbol_table_find_symbol(state->st, 0, $4);
+              _mesa_symbol_table_find_symbol(state->st, $4);
 
 	   free($4);
 
@@ -2048,7 +2043,7 @@ ALIAS_statement: ALIAS IDENTIFIER '=' USED_IDENTIFIER
 		      "undefined variable binding in ALIAS statement");
 	      YYERROR;
 	   } else {
-	      _mesa_symbol_table_add_symbol(state->st, 0, $2, target);
+              _mesa_symbol_table_add_symbol(state->st, $2, target);
 	   }
 	}
 	;
@@ -2220,9 +2215,30 @@ set_src_reg_swz(struct asm_src_register *r, gl_register_file file, GLint index,
 int
 validate_inputs(struct YYLTYPE *locp, struct asm_parser_state *state)
 {
-   const GLbitfield64 inputs = state->prog->InputsRead | state->InputsBound;
+   const GLbitfield64 inputs = state->prog->info.inputs_read | state->InputsBound;
+   GLbitfield ff_inputs = 0;
 
-   if (((inputs & VERT_BIT_FF_ALL) & (inputs >> VERT_ATTRIB_GENERIC0)) != 0) {
+   /* Since Mesa internal attribute indices are different from
+    * how NV_vertex_program defines attribute aliasing, we have to construct
+    * a separate usage mask based on how the aliasing is defined.
+    *
+    * Note that attribute aliasing is optional if NV_vertex_program is
+    * unsupported.
+    */
+   if (inputs & VERT_BIT_POS)
+      ff_inputs |= 1 << 0;
+   if (inputs & VERT_BIT_NORMAL)
+      ff_inputs |= 1 << 2;
+   if (inputs & VERT_BIT_COLOR0)
+      ff_inputs |= 1 << 3;
+   if (inputs & VERT_BIT_COLOR1)
+      ff_inputs |= 1 << 4;
+   if (inputs & VERT_BIT_FOG)
+      ff_inputs |= 1 << 5;
+
+   ff_inputs |= ((inputs & VERT_BIT_TEX_ALL) >> VERT_ATTRIB_TEX0) << 8;
+
+   if ((ff_inputs & (inputs >> VERT_ATTRIB_GENERIC0)) != 0) {
       yyerror(locp, state, "illegal use of generic attribute and name attribute");
       return 0;
    }
@@ -2237,7 +2253,7 @@ declare_variable(struct asm_parser_state *state, char *name, enum asm_type t,
 {
    struct asm_symbol *s = NULL;
    struct asm_symbol *exist = (struct asm_symbol *)
-      _mesa_symbol_table_find_symbol(state->st, 0, name);
+      _mesa_symbol_table_find_symbol(state->st, name);
 
 
    if (exist != NULL) {
@@ -2249,18 +2265,19 @@ declare_variable(struct asm_parser_state *state, char *name, enum asm_type t,
 
       switch (t) {
       case at_temp:
-	 if (state->prog->NumTemporaries >= state->limits->MaxTemps) {
+         if (state->prog->arb.NumTemporaries >= state->limits->MaxTemps) {
 	    yyerror(locp, state, "too many temporaries declared");
 	    free(s);
 	    return NULL;
 	 }
 
-	 s->temp_binding = state->prog->NumTemporaries;
-	 state->prog->NumTemporaries++;
+         s->temp_binding = state->prog->arb.NumTemporaries;
+         state->prog->arb.NumTemporaries++;
 	 break;
 
       case at_address:
-	 if (state->prog->NumAddressRegs >= state->limits->MaxAddressRegs) {
+         if (state->prog->arb.NumAddressRegs >=
+             state->limits->MaxAddressRegs) {
 	    yyerror(locp, state, "too many address registers declared");
 	    free(s);
 	    return NULL;
@@ -2268,14 +2285,14 @@ declare_variable(struct asm_parser_state *state, char *name, enum asm_type t,
 
 	 /* FINISHME: Add support for multiple address registers.
 	  */
-	 state->prog->NumAddressRegs++;
+         state->prog->arb.NumAddressRegs++;
 	 break;
 
       default:
 	 break;
       }
 
-      _mesa_symbol_table_add_symbol(state->st, 0, s->name, s);
+      _mesa_symbol_table_add_symbol(state->st, s->name, s);
       s->next = state->sym;
       state->sym = s;
    }
@@ -2285,7 +2302,7 @@ declare_variable(struct asm_parser_state *state, char *name, enum asm_type t,
 
 
 int add_state_reference(struct gl_program_parameter_list *param_list,
-			const gl_state_index tokens[STATE_LENGTH])
+			const gl_state_index16 tokens[STATE_LENGTH])
 {
    const GLuint size = 4; /* XXX fix */
    char *name;
@@ -2293,7 +2310,7 @@ int add_state_reference(struct gl_program_parameter_list *param_list,
 
    name = _mesa_program_state_string(tokens);
    index = _mesa_add_parameter(param_list, PROGRAM_STATE_VAR, name,
-                               size, GL_NONE, NULL, tokens);
+                               size, GL_NONE, NULL, tokens, true);
    param_list->StateFlags |= _mesa_program_state_flags(tokens);
 
    /* free name string here since we duplicated it in add_parameter() */
@@ -2306,10 +2323,10 @@ int add_state_reference(struct gl_program_parameter_list *param_list,
 int
 initialize_symbol_from_state(struct gl_program *prog,
 			     struct asm_symbol *param_var, 
-			     const gl_state_index tokens[STATE_LENGTH])
+			     const gl_state_index16 tokens[STATE_LENGTH])
 {
    int idx = -1;
-   gl_state_index state_tokens[STATE_LENGTH];
+   gl_state_index16 state_tokens[STATE_LENGTH];
 
 
    memcpy(state_tokens, tokens, sizeof(state_tokens));
@@ -2358,10 +2375,10 @@ initialize_symbol_from_state(struct gl_program *prog,
 int
 initialize_symbol_from_param(struct gl_program *prog,
 			     struct asm_symbol *param_var, 
-			     const gl_state_index tokens[STATE_LENGTH])
+			     const gl_state_index16 tokens[STATE_LENGTH])
 {
    int idx = -1;
-   gl_state_index state_tokens[STATE_LENGTH];
+   gl_state_index16 state_tokens[STATE_LENGTH];
 
 
    memcpy(state_tokens, tokens, sizeof(state_tokens));
@@ -2513,7 +2530,7 @@ _mesa_parse_arb_program(struct gl_context *ctx, GLenum target, const GLubyte *st
 
    /* Make a copy of the program string and force it to be NUL-terminated.
     */
-   strz = (GLubyte *) malloc(len + 1);
+   strz = (GLubyte *) ralloc_size(state->mem_ctx, len + 1);
    if (strz == NULL) {
       _mesa_error(ctx, GL_OUT_OF_MEMORY, "glProgramStringARB");
       return GL_FALSE;
@@ -2566,41 +2583,43 @@ _mesa_parse_arb_program(struct gl_context *ctx, GLenum target, const GLubyte *st
    
    /* Add one instruction to store the "END" instruction.
     */
-   state->prog->Instructions =
-      _mesa_alloc_instructions(state->prog->NumInstructions + 1);
+   state->prog->arb.Instructions =
+      rzalloc_array(state->mem_ctx, struct prog_instruction,
+                    state->prog->arb.NumInstructions + 1);
 
-   if (state->prog->Instructions == NULL) {
+   if (state->prog->arb.Instructions == NULL) {
       goto error;
    }
 
    inst = state->inst_head;
-   for (i = 0; i < state->prog->NumInstructions; i++) {
+   for (i = 0; i < state->prog->arb.NumInstructions; i++) {
       struct asm_instruction *const temp = inst->next;
 
-      state->prog->Instructions[i] = inst->Base;
+      state->prog->arb.Instructions[i] = inst->Base;
       inst = temp;
    }
 
    /* Finally, tag on an OPCODE_END instruction */
    {
-      const GLuint numInst = state->prog->NumInstructions;
-      _mesa_init_instructions(state->prog->Instructions + numInst, 1);
-      state->prog->Instructions[numInst].Opcode = OPCODE_END;
+      const GLuint numInst = state->prog->arb.NumInstructions;
+      _mesa_init_instructions(state->prog->arb.Instructions + numInst, 1);
+      state->prog->arb.Instructions[numInst].Opcode = OPCODE_END;
    }
-   state->prog->NumInstructions++;
+   state->prog->arb.NumInstructions++;
 
-   state->prog->NumParameters = state->prog->Parameters->NumParameters;
-   state->prog->NumAttributes = _mesa_bitcount_64(state->prog->InputsRead);
+   state->prog->arb.NumParameters = state->prog->Parameters->NumParameters;
+   state->prog->arb.NumAttributes =
+      util_bitcount64(state->prog->info.inputs_read);
 
    /*
     * Initialize native counts to logical counts.  The device driver may
     * change them if program is translated into a hardware program.
     */
-   state->prog->NumNativeInstructions = state->prog->NumInstructions;
-   state->prog->NumNativeTemporaries = state->prog->NumTemporaries;
-   state->prog->NumNativeParameters = state->prog->NumParameters;
-   state->prog->NumNativeAttributes = state->prog->NumAttributes;
-   state->prog->NumNativeAddressRegs = state->prog->NumAddressRegs;
+   state->prog->arb.NumNativeInstructions = state->prog->arb.NumInstructions;
+   state->prog->arb.NumNativeTemporaries = state->prog->arb.NumTemporaries;
+   state->prog->arb.NumNativeParameters = state->prog->arb.NumParameters;
+   state->prog->arb.NumNativeAttributes = state->prog->arb.NumAttributes;
+   state->prog->arb.NumNativeAddressRegs = state->prog->arb.NumAddressRegs;
 
    result = GL_TRUE;
 

@@ -25,8 +25,9 @@
 #include "ast.h"
 #include "compiler/glsl_types.h"
 #include "ir.h"
-#include "main/core.h" /* for MIN2 */
+#include "main/mtypes.h"
 #include "main/shaderobj.h"
+#include "builtin_functions.h"
 
 static ir_rvalue *
 convert_component(ir_rvalue *src, const glsl_type *desired_type);
@@ -36,6 +37,7 @@ process_parameters(exec_list *instructions, exec_list *actual_parameters,
                    exec_list *parameters,
                    struct _mesa_glsl_parse_state *state)
 {
+   void *mem_ctx = state;
    unsigned count = 0;
 
    foreach_list_typed(ast_node, ast, link, parameters) {
@@ -47,7 +49,9 @@ process_parameters(exec_list *instructions, exec_list *actual_parameters,
       ast->set_is_lhs(true);
       ir_rvalue *result = ast->hir(instructions, state);
 
-      ir_constant *const constant = result->constant_expression_value();
+      ir_constant *const constant =
+         result->constant_expression_value(mem_ctx);
+
       if (constant != NULL)
          result = constant;
 
@@ -106,35 +110,35 @@ verify_image_parameter(YYLTYPE *loc, _mesa_glsl_parse_state *state,
     *  qualifiers. [...] It is legal to have additional qualifiers
     *  on a formal parameter, but not to have fewer."
     */
-   if (actual->data.image_coherent && !formal->data.image_coherent) {
+   if (actual->data.memory_coherent && !formal->data.memory_coherent) {
       _mesa_glsl_error(loc, state,
                        "function call parameter `%s' drops "
                        "`coherent' qualifier", formal->name);
       return false;
    }
 
-   if (actual->data.image_volatile && !formal->data.image_volatile) {
+   if (actual->data.memory_volatile && !formal->data.memory_volatile) {
       _mesa_glsl_error(loc, state,
                        "function call parameter `%s' drops "
                        "`volatile' qualifier", formal->name);
       return false;
    }
 
-   if (actual->data.image_restrict && !formal->data.image_restrict) {
+   if (actual->data.memory_restrict && !formal->data.memory_restrict) {
       _mesa_glsl_error(loc, state,
                        "function call parameter `%s' drops "
                        "`restrict' qualifier", formal->name);
       return false;
    }
 
-   if (actual->data.image_read_only && !formal->data.image_read_only) {
+   if (actual->data.memory_read_only && !formal->data.memory_read_only) {
       _mesa_glsl_error(loc, state,
                        "function call parameter `%s' drops "
                        "`readonly' qualifier", formal->name);
       return false;
    }
 
-   if (actual->data.image_write_only && !formal->data.image_write_only) {
+   if (actual->data.memory_write_only && !formal->data.memory_write_only) {
       _mesa_glsl_error(loc, state,
                        "function call parameter `%s' drops "
                        "`writeonly' qualifier", formal->name);
@@ -223,17 +227,28 @@ verify_parameter_modes(_mesa_glsl_parse_state *state,
             val = ((ir_swizzle *)val)->val;
          }
 
-         while (val->ir_type == ir_type_dereference_array) {
-            val = ((ir_dereference_array *)val)->array;
+         for (;;) {
+            if (val->ir_type == ir_type_dereference_array) {
+               val = ((ir_dereference_array *)val)->array;
+            } else if (val->ir_type == ir_type_dereference_record &&
+                       !state->es_shader) {
+               val = ((ir_dereference_record *)val)->record;
+            } else
+               break;
          }
 
-         if (!val->as_dereference_variable() ||
-             val->variable_referenced()->data.mode != ir_var_shader_in) {
+         ir_variable *var = NULL;
+         if (const ir_dereference_variable *deref_var = val->as_dereference_variable())
+            var = deref_var->variable_referenced();
+
+         if (!var || var->data.mode != ir_var_shader_in) {
             _mesa_glsl_error(&loc, state,
                              "parameter `%s` must be a shader input",
                              formal->name);
             return false;
          }
+
+         var->data.must_be_shader_input = 1;
       }
 
       /* Verify that 'out' and 'inout' actual parameters are lvalues. */
@@ -280,7 +295,7 @@ verify_parameter_modes(_mesa_glsl_parse_state *state,
                              mode, formal->name,
                              actual->variable_referenced()->name);
             return false;
-         } else if (!actual->is_lvalue()) {
+         } else if (!actual->is_lvalue(state)) {
             _mesa_glsl_error(&loc, state,
                              "function parameter '%s %s' is not an lvalue",
                              mode, formal->name);
@@ -333,6 +348,49 @@ verify_parameter_modes(_mesa_glsl_parse_state *state,
    return true;
 }
 
+struct copy_index_deref_data {
+   void *mem_ctx;
+   exec_list *before_instructions;
+};
+
+static void
+copy_index_derefs_to_temps(ir_instruction *ir, void *data)
+{
+   struct copy_index_deref_data *d = (struct copy_index_deref_data *)data;
+
+   if (ir->ir_type == ir_type_dereference_array) {
+      ir_dereference_array *a = (ir_dereference_array *) ir;
+      ir = a->array->as_dereference();
+
+      ir_rvalue *idx = a->array_index;
+      if (idx->as_dereference_variable()) {
+         ir_variable *var = idx->variable_referenced();
+
+         /* If the index is read only it cannot change so there is no need
+          * to copy it.
+          */
+         if (var->data.read_only || var->data.memory_read_only)
+            return;
+
+         ir_variable *tmp = new(d->mem_ctx) ir_variable(idx->type, "idx_tmp",
+                                                        ir_var_temporary);
+         d->before_instructions->push_tail(tmp);
+
+         ir_dereference_variable *const deref_tmp_1 =
+            new(d->mem_ctx) ir_dereference_variable(tmp);
+         ir_assignment *const assignment =
+            new(d->mem_ctx) ir_assignment(deref_tmp_1,
+                                          idx->clone(d->mem_ctx, NULL));
+         d->before_instructions->push_tail(assignment);
+
+         /* Replace the array index with a dereference of the new temporary */
+         ir_dereference_variable *const deref_tmp_2 =
+            new(d->mem_ctx) ir_dereference_variable(tmp);
+         a->array_index = deref_tmp_2;
+      }
+   }
+}
+
 static void
 fix_parameter(void *mem_ctx, ir_rvalue *actual, const glsl_type *formal_type,
               exec_list *before_instructions, exec_list *after_instructions,
@@ -346,6 +404,17 @@ fix_parameter(void *mem_ctx, ir_rvalue *actual, const glsl_type *formal_type,
    if (formal_type == actual->type
        && (expr == NULL || expr->operation != ir_binop_vector_extract))
       return;
+
+   /* An array index could also be an out variable so we need to make a copy
+    * of them before the function is called.
+    */
+   if (!actual->as_dereference_variable()) {
+      struct copy_index_deref_data data;
+      data.mem_ctx = mem_ctx;
+      data.before_instructions = before_instructions;
+
+      visit_tree(actual, copy_index_derefs_to_temps, &data);
+   }
 
    /* To convert an out parameter, we need to create a temporary variable to
     * hold the value before conversion, and then perform the conversion after
@@ -514,8 +583,10 @@ generate_call(exec_list *instructions, ir_function_signature *sig,
     * If the function call is a constant expression, don't generate any
     * instructions; just generate an ir_constant.
     */
-   if (state->is_version(120, 100)) {
-      ir_constant *value = sig->constant_expression_value(actual_parameters,
+   if (state->is_version(120, 100) ||
+       state->ctx->Const.AllowGLSLBuiltinConstantExpression) {
+      ir_constant *value = sig->constant_expression_value(ctx,
+                                                          actual_parameters,
                                                           NULL);
       if (value != NULL) {
          return value;
@@ -542,6 +613,11 @@ generate_call(exec_list *instructions, ir_function_signature *sig,
    ir_call *call = new(ctx) ir_call(sig, deref,
                                     actual_parameters, sub_var, array_idx);
    instructions->push_tail(call);
+   if (sig->is_builtin()) {
+      /* inline immediately */
+      call->generate_inline(call);
+      call->remove();
+   }
 
    /* Also emit any necessary out-parameter conversions. */
    instructions->append_list(&post_call_conversions);
@@ -557,19 +633,18 @@ match_function_by_name(const char *name,
                        exec_list *actual_parameters,
                        struct _mesa_glsl_parse_state *state)
 {
-   void *ctx = state;
    ir_function *f = state->symbols->get_function(name);
    ir_function_signature *local_sig = NULL;
    ir_function_signature *sig = NULL;
 
    /* Is the function hidden by a record type constructor? */
    if (state->symbols->get_type(name))
-      goto done; /* no match */
+      return sig; /* no match */
 
    /* Is the function hidden by a variable (impossible in 1.10)? */
    if (!state->symbols->separate_function_namespace
        && state->symbols->get_variable(name))
-      goto done; /* no match */
+      return sig; /* no match */
 
    if (f != NULL) {
       /* In desktop GL, the presence of a user-defined signature hides any
@@ -583,32 +658,21 @@ match_function_by_name(const char *name,
       sig = local_sig = f->matching_signature(state, actual_parameters,
                                               allow_builtins, &is_exact);
       if (is_exact)
-         goto done;
+         return sig;
 
       if (!allow_builtins)
-         goto done;
+         return sig;
    }
 
    /* Local shader has no exact candidates; check the built-ins. */
    _mesa_glsl_initialize_builtin_functions();
    sig = _mesa_glsl_find_builtin_function(state, name, actual_parameters);
 
- done:
-   if (sig != NULL) {
-      /* If the match is from a linked built-in shader, import the
-       * prototype.
-       */
-      if (sig != local_sig) {
-         if (f == NULL) {
-            f = new(ctx) ir_function(name);
-            state->symbols->add_global_function(f);
-            emit_function(state, f);
-         }
-         sig = sig->clone_prototype(f, NULL);
-         f->add_signature(sig);
-      }
-   }
-   return sig;
+   /* if _mesa_glsl_find_builtin_function failed, fall back to the result
+    * of choose_best_inexact_overload() instead. This should only affect
+    * GLES.
+    */
+   return sig ? sig : local_sig;
 }
 
 static ir_function_signature *
@@ -672,8 +736,13 @@ generate_array_index(void *mem_ctx, exec_list *instructions,
       ir_variable *sub_var = NULL;
       *function_name = array->primary_expression.identifier;
 
-      match_subroutine_by_name(*function_name, actual_parameters,
-                               state, &sub_var);
+      if (!match_subroutine_by_name(*function_name, actual_parameters,
+                                    state, &sub_var)) {
+         _mesa_glsl_error(&loc, state, "Unknown subroutine `%s'",
+                          *function_name);
+         *function_name = NULL; /* indicate error condition to caller */
+         return NULL;
+      }
 
       ir_rvalue *outer_array_idx = idx->hir(instructions, state);
       return new(mem_ctx) ir_dereference_array(sub_var, outer_array_idx);
@@ -749,8 +818,8 @@ convert_component(ir_rvalue *src, const glsl_type *desired_type)
    if (src->type->is_error())
       return src;
 
-   assert(a <= GLSL_TYPE_BOOL);
-   assert(b <= GLSL_TYPE_BOOL);
+   assert(a <= GLSL_TYPE_IMAGE);
+   assert(b <= GLSL_TYPE_IMAGE);
 
    if (a == b)
       return src;
@@ -772,6 +841,18 @@ convert_component(ir_rvalue *src, const glsl_type *desired_type)
       case GLSL_TYPE_DOUBLE:
          result = new(ctx) ir_expression(ir_unop_d2u, src);
          break;
+      case GLSL_TYPE_UINT64:
+         result = new(ctx) ir_expression(ir_unop_u642u, src);
+         break;
+      case GLSL_TYPE_INT64:
+         result = new(ctx) ir_expression(ir_unop_i642u, src);
+         break;
+      case GLSL_TYPE_SAMPLER:
+         result = new(ctx) ir_expression(ir_unop_unpack_sampler_2x32, src);
+         break;
+      case GLSL_TYPE_IMAGE:
+         result = new(ctx) ir_expression(ir_unop_unpack_image_2x32, src);
+         break;
       }
       break;
    case GLSL_TYPE_INT:
@@ -788,6 +869,12 @@ convert_component(ir_rvalue *src, const glsl_type *desired_type)
       case GLSL_TYPE_DOUBLE:
          result = new(ctx) ir_expression(ir_unop_d2i, src);
          break;
+      case GLSL_TYPE_UINT64:
+         result = new(ctx) ir_expression(ir_unop_u642i, src);
+         break;
+      case GLSL_TYPE_INT64:
+         result = new(ctx) ir_expression(ir_unop_i642i, src);
+         break;
       }
       break;
    case GLSL_TYPE_FLOAT:
@@ -803,6 +890,12 @@ convert_component(ir_rvalue *src, const glsl_type *desired_type)
          break;
       case GLSL_TYPE_DOUBLE:
          result = new(ctx) ir_expression(ir_unop_d2f, desired_type, src, NULL);
+         break;
+      case GLSL_TYPE_UINT64:
+         result = new(ctx) ir_expression(ir_unop_u642f, desired_type, src, NULL);
+         break;
+      case GLSL_TYPE_INT64:
+         result = new(ctx) ir_expression(ir_unop_i642f, desired_type, src, NULL);
          break;
       }
       break;
@@ -822,6 +915,14 @@ convert_component(ir_rvalue *src, const glsl_type *desired_type)
       case GLSL_TYPE_DOUBLE:
          result = new(ctx) ir_expression(ir_unop_d2b, desired_type, src, NULL);
          break;
+      case GLSL_TYPE_UINT64:
+         result = new(ctx) ir_expression(ir_unop_i642b,
+                                         new(ctx) ir_expression(ir_unop_u642i64,
+                                                                src));
+         break;
+      case GLSL_TYPE_INT64:
+         result = new(ctx) ir_expression(ir_unop_i642b, desired_type, src, NULL);
+         break;
       }
       break;
    case GLSL_TYPE_DOUBLE:
@@ -840,14 +941,83 @@ convert_component(ir_rvalue *src, const glsl_type *desired_type)
       case GLSL_TYPE_FLOAT:
          result = new(ctx) ir_expression(ir_unop_f2d, desired_type, src, NULL);
          break;
+      case GLSL_TYPE_UINT64:
+         result = new(ctx) ir_expression(ir_unop_u642d, desired_type, src, NULL);
+         break;
+      case GLSL_TYPE_INT64:
+         result = new(ctx) ir_expression(ir_unop_i642d, desired_type, src, NULL);
+         break;
       }
+      break;
+   case GLSL_TYPE_UINT64:
+      switch (b) {
+      case GLSL_TYPE_INT:
+         result = new(ctx) ir_expression(ir_unop_i2u64, src);
+         break;
+      case GLSL_TYPE_UINT:
+         result = new(ctx) ir_expression(ir_unop_u2u64, src);
+         break;
+      case GLSL_TYPE_BOOL:
+         result = new(ctx) ir_expression(ir_unop_i642u64,
+                                         new(ctx) ir_expression(ir_unop_b2i64,
+                                                                src));
+         break;
+      case GLSL_TYPE_FLOAT:
+         result = new(ctx) ir_expression(ir_unop_f2u64, src);
+         break;
+      case GLSL_TYPE_DOUBLE:
+         result = new(ctx) ir_expression(ir_unop_d2u64, src);
+         break;
+      case GLSL_TYPE_INT64:
+         result = new(ctx) ir_expression(ir_unop_i642u64, src);
+         break;
+      }
+      break;
+   case GLSL_TYPE_INT64:
+      switch (b) {
+      case GLSL_TYPE_INT:
+         result = new(ctx) ir_expression(ir_unop_i2i64, src);
+         break;
+      case GLSL_TYPE_UINT:
+         result = new(ctx) ir_expression(ir_unop_u2i64, src);
+         break;
+      case GLSL_TYPE_BOOL:
+         result = new(ctx) ir_expression(ir_unop_b2i64, src);
+         break;
+      case GLSL_TYPE_FLOAT:
+         result = new(ctx) ir_expression(ir_unop_f2i64, src);
+         break;
+      case GLSL_TYPE_DOUBLE:
+         result = new(ctx) ir_expression(ir_unop_d2i64, src);
+         break;
+      case GLSL_TYPE_UINT64:
+         result = new(ctx) ir_expression(ir_unop_u642i64, src);
+         break;
+      }
+      break;
+   case GLSL_TYPE_SAMPLER:
+      switch (b) {
+      case GLSL_TYPE_UINT:
+         result = new(ctx)
+            ir_expression(ir_unop_pack_sampler_2x32, desired_type, src);
+         break;
+      }
+      break;
+   case GLSL_TYPE_IMAGE:
+      switch (b) {
+      case GLSL_TYPE_UINT:
+         result = new(ctx)
+            ir_expression(ir_unop_pack_image_2x32, desired_type, src);
+         break;
+      }
+      break;
    }
 
    assert(result != NULL);
    assert(result->type == desired_type);
 
    /* Try constant folding; it may fold in the conversion we just added. */
-   ir_constant *const constant = result->constant_expression_value();
+   ir_constant *const constant = result->constant_expression_value(ctx);
    return (constant != NULL) ? (ir_rvalue *) constant : (ir_rvalue *) result;
 }
 
@@ -875,6 +1045,7 @@ static bool
 implicitly_convert_component(ir_rvalue * &from, const glsl_base_type to,
                              struct _mesa_glsl_parse_state *state)
 {
+   void *mem_ctx = state;
    ir_rvalue *result = from;
 
    if (to != from->type->base_type) {
@@ -893,7 +1064,7 @@ implicitly_convert_component(ir_rvalue * &from, const glsl_base_type to,
       }
    }
 
-   ir_rvalue *const constant = result->constant_expression_value();
+   ir_rvalue *const constant = result->constant_expression_value(mem_ctx);
 
    if (constant != NULL)
       result = constant;
@@ -1031,7 +1202,7 @@ process_vec_mat_constructor(exec_list *instructions,
       if (var->type->is_matrix()) {
          ir_rvalue *lhs =
             new(ctx) ir_dereference_array(var, new(ctx) ir_constant(i));
-         assignment = new(ctx) ir_assignment(lhs, rhs, NULL);
+         assignment = new(ctx) ir_assignment(lhs, rhs);
       } else {
          /* use writemask rather than index for vector */
          assert(var->type->is_vector());
@@ -1167,7 +1338,7 @@ process_array_constructor(exec_list *instructions,
       ir_rvalue *lhs = new(ctx) ir_dereference_array(var,
                                                      new(ctx) ir_constant(i));
 
-      ir_instruction *assignment = new(ctx) ir_assignment(lhs, rhs, NULL);
+      ir_instruction *assignment = new(ctx) ir_assignment(lhs, rhs);
       instructions->push_tail(assignment);
 
       i++;
@@ -1180,7 +1351,7 @@ process_array_constructor(exec_list *instructions,
 /**
  * Determine if a list consists of a single scalar r-value
  */
-bool
+static bool
 single_scalar_parameter(exec_list *parameters)
 {
    const ir_rvalue *const p = (ir_rvalue *) parameters->get_head_raw();
@@ -1201,7 +1372,7 @@ single_scalar_parameter(exec_list *parameters)
  * An \c ir_dereference_variable of the temprorary generated in the constructor
  * body.
  */
-ir_rvalue *
+static ir_rvalue *
 emit_inline_vector_constructor(const glsl_type *type,
                                exec_list *instructions,
                                exec_list *parameters,
@@ -1272,6 +1443,12 @@ emit_inline_vector_constructor(const glsl_type *type,
                case GLSL_TYPE_BOOL:
                   data.b[i + base_component] = c->get_bool_component(i);
                   break;
+               case GLSL_TYPE_UINT64:
+                  data.u64[i + base_component] = c->get_uint64_component(i);
+                  break;
+               case GLSL_TYPE_INT64:
+                  data.i64[i + base_component] = c->get_int64_component(i);
+                  break;
                default:
                   assert(!"Should not get here.");
                   break;
@@ -1279,8 +1456,7 @@ emit_inline_vector_constructor(const glsl_type *type,
             }
 
             /* Mask of fields to be written in the assignment. */
-            constant_mask |=
-               ((1U << rhs_components) - 1) << base_lhs_component;
+            constant_mask |= ((1U << rhs_components) - 1) << base_lhs_component;
             constant_components += rhs_components;
 
             base_component += rhs_components;
@@ -1360,7 +1536,7 @@ emit_inline_vector_constructor(const glsl_type *type,
  * \c src_base + \c count must be less than or equal to the number of
  * components in the source vector.
  */
-ir_instruction *
+static ir_instruction *
 assign_to_matrix_column(ir_variable *var, unsigned column, unsigned row_base,
                         ir_rvalue *src, unsigned src_base, unsigned count,
                         void *mem_ctx)
@@ -1400,7 +1576,7 @@ assign_to_matrix_column(ir_variable *var, unsigned column, unsigned row_base,
  * An \c ir_dereference_variable of the temprorary generated in the constructor
  * body.
  */
-ir_rvalue *
+static ir_rvalue *
 emit_inline_matrix_constructor(const glsl_type *type,
                                exec_list *instructions,
                                exec_list *parameters,
@@ -1431,8 +1607,7 @@ emit_inline_matrix_constructor(const glsl_type *type,
        * components with zero.
        */
       glsl_base_type param_base_type = first_param->type->base_type;
-      assert(param_base_type == GLSL_TYPE_FLOAT ||
-             param_base_type == GLSL_TYPE_DOUBLE);
+      assert(first_param->type->is_float() || first_param->type->is_double());
       ir_variable *rhs_var =
          new(ctx) ir_variable(glsl_type::get_instance(param_base_type, 4, 1),
                               "mat_ctor_vec",
@@ -1441,15 +1616,14 @@ emit_inline_matrix_constructor(const glsl_type *type,
 
       ir_constant_data zero;
       for (unsigned i = 0; i < 4; i++)
-         if (param_base_type == GLSL_TYPE_FLOAT)
+         if (first_param->type->is_float())
             zero.f[i] = 0.0;
          else
             zero.d[i] = 0.0;
 
       ir_instruction *inst =
          new(ctx) ir_assignment(new(ctx) ir_dereference_variable(rhs_var),
-                                new(ctx) ir_constant(rhs_var->type, &zero),
-                                NULL);
+                                new(ctx) ir_constant(rhs_var->type, &zero));
       instructions->push_tail(inst);
 
       ir_dereference *const rhs_ref =
@@ -1482,7 +1656,7 @@ emit_inline_matrix_constructor(const glsl_type *type,
          ir_rvalue *const rhs = new(ctx) ir_swizzle(rhs_ref, rhs_swiz[i],
                                                     type->vector_elements);
 
-         inst = new(ctx) ir_assignment(col_ref, rhs, NULL);
+         inst = new(ctx) ir_assignment(col_ref, rhs);
          instructions->push_tail(inst);
       }
 
@@ -1495,7 +1669,7 @@ emit_inline_matrix_constructor(const glsl_type *type,
          ir_rvalue *const rhs = new(ctx) ir_swizzle(rhs_ref, 1, 1, 1, 1,
                                                     type->vector_elements);
 
-         inst = new(ctx) ir_assignment(col_ref, rhs, NULL);
+         inst = new(ctx) ir_assignment(col_ref, rhs);
          instructions->push_tail(inst);
       }
    } else if (first_param->type->is_matrix()) {
@@ -1549,7 +1723,7 @@ emit_inline_matrix_constructor(const glsl_type *type,
             ir_rvalue *const lhs =
                new(ctx) ir_dereference_array(var, new(ctx) ir_constant(col));
 
-            ir_instruction *inst = new(ctx) ir_assignment(lhs, rhs, NULL);
+            ir_instruction *inst = new(ctx) ir_assignment(lhs, rhs);
             instructions->push_tail(inst);
          }
       }
@@ -1567,7 +1741,7 @@ emit_inline_matrix_constructor(const glsl_type *type,
       ir_dereference *const rhs_var_ref =
          new(ctx) ir_dereference_variable(rhs_var);
       ir_instruction *const inst =
-         new(ctx) ir_assignment(rhs_var_ref, first_param, NULL);
+         new(ctx) ir_assignment(rhs_var_ref, first_param);
       instructions->push_tail(inst);
 
       const unsigned last_row = MIN2(src_matrix->type->vector_elements,
@@ -1630,7 +1804,7 @@ emit_inline_matrix_constructor(const glsl_type *type,
 
          ir_dereference *rhs_var_ref =
             new(ctx) ir_dereference_variable(rhs_var);
-         ir_instruction *inst = new(ctx) ir_assignment(rhs_var_ref, rhs, NULL);
+         ir_instruction *inst = new(ctx) ir_assignment(rhs_var_ref, rhs);
          instructions->push_tail(inst);
 
          do {
@@ -1670,7 +1844,7 @@ emit_inline_matrix_constructor(const glsl_type *type,
 }
 
 
-ir_rvalue *
+static ir_rvalue *
 emit_inline_record_constructor(const glsl_type *type,
                                exec_list *instructions,
                                exec_list *parameters,
@@ -1694,8 +1868,7 @@ emit_inline_record_constructor(const glsl_type *type,
       ir_rvalue *const rhs = ((ir_instruction *) node)->as_rvalue();
       assert(rhs != NULL);
 
-      ir_instruction *const assign =
-         new(mem_ctx) ir_assignment(lhs, rhs, NULL);
+      ir_instruction *const assign = new(mem_ctx) ir_assignment(lhs, rhs);
 
       instructions->push_tail(assign);
       node = node->next;
@@ -1856,6 +2029,13 @@ ast_function_expression::handle_method(exec_list *instructions,
    return ir_rvalue::error_value(ctx);
 }
 
+static inline bool is_valid_constructor(const glsl_type *type,
+                                        struct _mesa_glsl_parse_state *state)
+{
+   return type->is_numeric() || type->is_boolean() ||
+          (state->has_bindless() && (type->is_sampler() || type->is_image()));
+}
+
 ir_rvalue *
 ast_function_expression::hir(exec_list *instructions,
                              struct _mesa_glsl_parse_state *state)
@@ -1888,9 +2068,21 @@ ast_function_expression::hir(exec_list *instructions,
 
 
       /* Constructors for opaque types are illegal.
+       *
+       * From section 4.1.7 of the ARB_bindless_texture spec:
+       *
+       * "Samplers are represented using 64-bit integer handles, and may be "
+       *  converted to and from 64-bit integers using constructors."
+       *
+       * From section 4.1.X of the ARB_bindless_texture spec:
+       *
+       * "Images are represented using 64-bit integer handles, and may be
+       *  converted to and from 64-bit integers using constructors."
        */
-      if (constructor_type->contains_opaque()) {
-         _mesa_glsl_error(& loc, state, "cannot construct opaque type `%s'",
+      if (constructor_type->contains_atomic() ||
+          (!state->has_bindless() && constructor_type->contains_opaque())) {
+         _mesa_glsl_error(& loc, state, "cannot construct %s type `%s'",
+                          state->has_bindless() ? "atomic" : "opaque",
                           constructor_type->name);
          return ir_rvalue::error_value(ctx);
       }
@@ -1933,7 +2125,7 @@ ast_function_expression::hir(exec_list *instructions,
                                            state);
       }
 
-      if (!constructor_type->is_numeric() && !constructor_type->is_boolean())
+      if (!is_valid_constructor(constructor_type, state))
          return ir_rvalue::error_value(ctx);
 
       /* Total number of components of the type being constructed. */
@@ -1963,7 +2155,7 @@ ast_function_expression::hir(exec_list *instructions,
             return ir_rvalue::error_value(ctx);
          }
 
-         if (!result->type->is_numeric() && !result->type->is_boolean()) {
+         if (!is_valid_constructor(result->type, state)) {
             _mesa_glsl_error(& loc, state, "cannot construct `%s' from a "
                              "non-numeric data type",
                              constructor_type->name);
@@ -2038,8 +2230,8 @@ ast_function_expression::hir(exec_list *instructions,
             instructions->push_tail(var);
             instructions->push_tail(
                new(ctx) ir_assignment(new(ctx) ir_dereference_variable(var),
-                                      matrix, NULL));
-            var->constant_value = matrix->constant_expression_value();
+                                      matrix));
+            var->constant_value = matrix->constant_expression_value(ctx);
 
             /* Replace the matrix with dereferences of its columns. */
             for (int i = 0; i < matrix->type->matrix_columns; i++) {
@@ -2055,17 +2247,58 @@ ast_function_expression::hir(exec_list *instructions,
 
       /* Type cast each parameter and, if possible, fold constants.*/
       foreach_in_list_safe(ir_rvalue, ir, &actual_parameters) {
-         const glsl_type *desired_type =
-            glsl_type::get_instance(constructor_type->base_type,
-                                    ir->type->vector_elements,
-                                    ir->type->matrix_columns);
+         const glsl_type *desired_type;
+
+         /* From section 5.4.1 of the ARB_bindless_texture spec:
+          *
+          * "In the following four constructors, the low 32 bits of the sampler
+          *  type correspond to the .x component of the uvec2 and the high 32
+          *  bits correspond to the .y component."
+          *
+          *  uvec2(any sampler type)     // Converts a sampler type to a
+          *                              //   pair of 32-bit unsigned integers
+          *  any sampler type(uvec2)     // Converts a pair of 32-bit unsigned integers to
+          *                              //   a sampler type
+          *  uvec2(any image type)       // Converts an image type to a
+          *                              //   pair of 32-bit unsigned integers
+          *  any image type(uvec2)       // Converts a pair of 32-bit unsigned integers to
+          *                              //   an image type
+          */
+         if (ir->type->is_sampler() || ir->type->is_image()) {
+            /* Convert a sampler/image type to a pair of 32-bit unsigned
+             * integers as defined by ARB_bindless_texture.
+             */
+            if (constructor_type != glsl_type::uvec2_type) {
+               _mesa_glsl_error(&loc, state, "sampler and image types can only "
+                                "be converted to a pair of 32-bit unsigned "
+                                "integers");
+            }
+            desired_type = glsl_type::uvec2_type;
+         } else if (constructor_type->is_sampler() ||
+                    constructor_type->is_image()) {
+            /* Convert a pair of 32-bit unsigned integers to a sampler or image
+             * type as defined by ARB_bindless_texture.
+             */
+            if (ir->type != glsl_type::uvec2_type) {
+               _mesa_glsl_error(&loc, state, "sampler and image types can only "
+                                "be converted from a pair of 32-bit unsigned "
+                                "integers");
+            }
+            desired_type = constructor_type;
+         } else {
+            desired_type =
+               glsl_type::get_instance(constructor_type->base_type,
+                                       ir->type->vector_elements,
+                                       ir->type->matrix_columns);
+         }
+
          ir_rvalue *result = convert_component(ir, desired_type);
 
          /* Attempt to convert the parameter to a constant valued expression.
           * After doing so, track whether or not all the parameters to the
           * constructor are trivially constant valued expressions.
           */
-         ir_rvalue *const constant = result->constant_expression_value();
+         ir_rvalue *const constant = result->constant_expression_value(ctx);
 
          if (constant != NULL)
             result = constant;
@@ -2102,7 +2335,7 @@ ast_function_expression::hir(exec_list *instructions,
       return handle_method(instructions, state);
    } else {
       const ast_expression *id = subexpressions[0];
-      const char *func_name;
+      const char *func_name = NULL;
       YYLTYPE loc = get_location();
       exec_list actual_parameters;
       ir_variable *sub_var = NULL;
@@ -2116,8 +2349,10 @@ ast_function_expression::hir(exec_list *instructions,
                                           id->subexpressions[0],
                                           id->subexpressions[1], &func_name,
                                           &actual_parameters);
-      } else {
+      } else if (id->oper == ast_identifier) {
          func_name = id->primary_expression.identifier;
+      } else {
+         _mesa_glsl_error(&loc, state, "function name is not an identifier");
       }
 
       /* an error was emitted earlier */
@@ -2142,9 +2377,38 @@ ast_function_expression::hir(exec_list *instructions,
                                          this->expressions)) {
          /* an error has already been emitted */
          value = ir_rvalue::error_value(ctx);
+      } else if (sig->is_builtin() && strcmp(func_name, "ftransform") == 0) {
+         /* ftransform refers to global variables, and we don't have any code
+          * for remapping the variable references in the built-in shader.
+          */
+         ir_variable *mvp =
+            state->symbols->get_variable("gl_ModelViewProjectionMatrix");
+         ir_variable *vtx = state->symbols->get_variable("gl_Vertex");
+         value = new(ctx) ir_expression(ir_binop_mul, glsl_type::vec4_type,
+                                        new(ctx) ir_dereference_variable(mvp),
+                                        new(ctx) ir_dereference_variable(vtx));
       } else {
-         value = generate_call(instructions, sig,
-                               &actual_parameters, sub_var, array_idx, state);
+         if (state->stage == MESA_SHADER_TESS_CTRL &&
+             sig->is_builtin() && strcmp(func_name, "barrier") == 0) {
+            if (state->current_function == NULL ||
+                strcmp(state->current_function->function_name(), "main") != 0) {
+               _mesa_glsl_error(&loc, state,
+                                "barrier() may only be used in main()");
+            }
+
+            if (state->found_return) {
+               _mesa_glsl_error(&loc, state,
+                                "barrier() may not be used after return");
+            }
+
+            if (instructions != &state->current_function->body) {
+               _mesa_glsl_error(&loc, state,
+                                "barrier() may not be used in control flow");
+            }
+         }
+
+         value = generate_call(instructions, sig, &actual_parameters, sub_var,
+                               array_idx, state);
          if (!value) {
             ir_variable *const tmp = new(ctx) ir_variable(glsl_type::void_type,
                                                           "void_var",

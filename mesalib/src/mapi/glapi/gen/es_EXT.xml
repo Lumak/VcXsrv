@@ -318,7 +318,8 @@
     <enum name="POINT_SIZE_ARRAY_OES"                     value="0x8B9C"/>
     <enum name="POINT_SIZE_ARRAY_BUFFER_BINDING_OES"	  value="0x8B9F"/>
 
-    <function name="PointSizePointerOES" es1="1.0" desktop="false">
+    <function name="PointSizePointerOES" es1="1.0" desktop="false"
+              no_error="true">
         <param name="type" type="GLenum"/>
         <param name="stride" type="GLsizei"/>
         <param name="pointer" type="const GLvoid *"/>
@@ -750,6 +751,57 @@
     </function>
 </category>
 
+<!-- 100. GL_EXT_occlusion_query_boolean -->
+<category name="GL_EXT_occlusion_query_boolean" number="100">
+    <enum name="CURRENT_QUERY_EXT"                   value="0x8865"/>
+    <enum name="QUERY_RESULT_EXT"                    value="0x8866"/>
+    <enum name="QUERY_RESULT_AVAILABLE_EXT"          value="0x8867"/>
+    <enum name="ANY_SAMPLES_PASSED_EXT"              value="0x8C2F"/>
+    <enum name="ANY_SAMPLES_PASSED_CONSERVATIVE_EXT" value="0x8D6A"/>
+
+    <function name="GenQueriesEXT" alias="GenQueries" es2="2.0">
+        <param name="n" type="GLsizei"/>
+        <param name="ids" type="GLuint *"/>
+    </function>
+
+    <function name="DeleteQueriesEXT" alias="DeleteQueries" es2="2.0">
+        <param name="n" type="GLsizei"/>
+        <param name="ids" type="const GLuint *"/>
+    </function>
+
+    <function name="IsQueryEXT" alias="IsQuery" es2="2.0">
+        <param name="id" type="GLuint"/>
+        <return type="GLboolean"/>
+    </function>
+
+    <function name="BeginQueryEXT" alias="BeginQuery" es2="2.0">
+        <param name="target" type="GLenum"/>
+        <param name="id" type="GLuint"/>
+    </function>
+
+    <function name="EndQueryEXT" alias="EndQuery" es2="2.0">
+        <param name="target" type="GLenum"/>
+    </function>
+
+    <function name="GetQueryivEXT" alias="GetQueryiv" es2="2.0">
+        <param name="target" type="GLenum"/>
+        <param name="pname" type="GLenum"/>
+        <param name="params" type="GLint *"/>
+    </function>
+
+    <function name="GetQueryObjectivEXT" alias="GetQueryObjectiv" es2="2.0">
+        <param name="id" type="GLuint"/>
+        <param name="pname" type="GLenum"/>
+        <param name="params" type="GLint *"/>
+    </function>
+
+    <function name="GetQueryObjectuivEXT" alias="GetQueryObjectuiv" es2="2.0">
+        <param name="id" type="GLuint"/>
+        <param name="pname" type="GLenum"/>
+        <param name="params" type="GLuint *"/>
+    </function>
+</category>
+
 <!-- 103. GL_EXT_texture_rg -->
 <category name="GL_EXT_texture_rg" number="103">
     <enum name="RED_EXT"                                  value="0x1903"/>
@@ -790,9 +842,20 @@
     </function>
 </category>
 
-<!-- 122. GL_EXT_shader_framebuffer_fetch -->
-<category name="GL_EXT_shader_framebuffer_fetch" number="122">
-    <enum name="FRAGMENT_SHADER_DISCARDS_SAMPLES_EXT" value="0x8A52"/>
+<!-- 150. GL_EXT_disjoint_timer_query -->
+<category name="GL_EXT_disjoint_timer_query" number="150">
+    <enum name="QUERY_COUNTER_BITS_EXT"     value="0x8864"/>
+    <enum name="CURRENT_QUERY_EXT"          value="0x8865"/>
+    <enum name="QUERY_RESULT_EXT"           value="0x8866"/>
+    <enum name="QUERY_RESULT_AVAILABLE_EXT" value="0x8867"/>
+    <enum name="TIME_ELAPSED_EXT"           value="0x88BF"/>
+    <enum name="TIMESTAMP_EXT"              value="0x8E28"/>
+    <enum name="GPU_DISJOINT_EXT"           value="0x8FBB"/>
+
+    <function name="QueryCounterEXT" alias="QueryCounter" es2="2.0">
+        <param name="id" type="GLuint"/>
+        <param name="target" type="GLenum"/>
+    </function>
 </category>
 
 <!-- 151. GL_EXT_draw_buffers -->
@@ -1164,16 +1227,6 @@
         <param name="basevertex" type="GLint"/>
     </function>
 
-    <function name="MultiDrawElementsBaseVertexOES" alias="MultiDrawElementsBaseVertex"
-              es2="2.0" exec="dynamic">
-        <param name="mode" type="GLenum"/>
-        <param name="count" type="const GLsizei *"/>
-        <param name="type" type="GLenum"/>
-        <param name="indices" type="const GLvoid * const *"/>
-        <param name="primcount" type="GLsizei"/>
-        <param name="basevertex" type="const GLint *"/>
-    </function>
-
     <function name="DrawElementsInstancedBaseVertexOES" alias="DrawElementsInstancedBaseVertex"
               es2="3.0" exec="dynamic">
         <param name="mode" type="GLenum"/>
@@ -1342,23 +1395,69 @@
 
 </category>
 
-<category name="ES3.2">
-
-    <!-- TODO: Move to GL 4.x when it is added to a GL version -->
-    <enum name="PRIMITIVE_BOUNDING_BOX_ARB" count="8" value="0x92BE">
-        <size name="Get" mode="get"/>
-    </enum>
-    <function name="PrimitiveBoundingBox" es2="3.2" desktop="false">
-        <param name="minX" type="GLfloat"/>
-        <param name="minY" type="GLfloat"/>
-        <param name="minZ" type="GLfloat"/>
-        <param name="minW" type="GLfloat"/>
-        <param name="maxX" type="GLfloat"/>
-        <param name="maxY" type="GLfloat"/>
-        <param name="maxZ" type="GLfloat"/>
-        <param name="maxW" type="GLfloat"/>
+<category name="GL_OES_viewport_array" number="267">
+    <function name="ViewportArrayvOES" es2="3.1" alias="ViewportArrayv">
+        <param name="first" type="GLuint"/>
+        <param name="count" type="GLsizei"/>
+        <param name="v" type="const GLfloat *"/>
     </function>
+    <function name="ViewportIndexedfOES" es2="3.1" alias="ViewportIndexedf">
+        <param name="index" type="GLuint"/>
+        <param name="x" type="GLfloat"/>
+        <param name="y" type="GLfloat"/>
+        <param name="w" type="GLfloat"/>
+        <param name="h" type="GLfloat"/>
+    </function>
+    <function name="ViewportIndexedfvOES" es2="3.1" alias="ViewportIndexedfv">
+        <param name="index" type="GLuint"/>
+        <param name="v" type="const GLfloat *"/>
+    </function>
+    <function name="ScissorArrayvOES" es2="3.1" alias="ScissorArrayv">
+        <param name="first" type="GLuint"/>
+        <param name="count" type="GLsizei"/>
+        <param name="v" type="const int *"/>
+    </function>
+    <function name="ScissorIndexedOES" es2="3.1" alias="ScissorIndexed">
+        <param name="index" type="GLuint"/>
+        <param name="left" type="GLint"/>
+        <param name="bottom" type="GLint"/>
+        <param name="width" type="GLsizei"/>
+        <param name="height" type="GLsizei"/>
+    </function>
+    <function name="ScissorIndexedvOES" es2="3.1" alias="ScissorIndexedv">
+        <param name="index" type="GLuint"/>
+        <param name="v" type="const GLint *"/>
+    </function>
+    <function name="DepthRangeArrayfvOES" es2="3.1" desktop="false">
+        <param name="first" type="GLuint"/>
+        <param name="count" type="GLsizei"/>
+        <param name="v" type="const GLfloat *"/>
+    </function>
+    <function name="DepthRangeIndexedfOES" es2="3.1" desktop="false">
+        <param name="index" type="GLuint"/>
+        <param name="n" type="GLfloat"/>
+        <param name="f" type="GLfloat"/>
+    </function>
+    <function name="GetFloati_vOES" es2="3.1" alias="GetFloati_v">
+        <param name="target" type="GLenum"/>
+        <param name="index" type="GLuint"/>
+        <param name="data" type="GLfloat *"/>
+    </function>
+</category>
 
+<!-- 218. GL_OES_texture_view -->
+
+<category name="GL_OES_texture_view" number="218">
+    <function name="TextureViewOES" es2="3.1" alias="TextureView">
+        <param name="texture" type="GLuint"/>
+        <param name="target" type="GLenum"/>
+        <param name="origtexture" type="GLuint"/>
+        <param name="internalformat" type="GLenum"/>
+        <param name="minlevel" type="GLuint"/>
+        <param name="numlevels" type="GLuint"/>
+        <param name="minlayer" type="GLuint"/>
+        <param name="numlayers" type="GLuint"/>
+   </function>
 </category>
 
 </OpenGLAPI>

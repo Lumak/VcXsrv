@@ -21,6 +21,7 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
+#include <stdlib.h>
 #include <stdio.h>
 #ifdef _MSC_VER
 #define __STDC__ 1
@@ -42,7 +43,6 @@
  * offline compile GLSL code and examine the resulting GLSL IR.
  */
 
-#include "main/mtypes.h"
 #include "standalone.h"
 
 static struct standalone_options options;
@@ -51,6 +51,7 @@ const struct option compiler_opts[] = {
    { "dump-ast", no_argument, &options.dump_ast, 1 },
    { "dump-hir", no_argument, &options.dump_hir, 1 },
    { "dump-lir", no_argument, &options.dump_lir, 1 },
+   { "dump-builder", no_argument, &options.dump_builder, 1 },
    { "link",     no_argument, &options.do_link,  1 },
    { "just-log", no_argument, &options.just_log, 1 },
    { "version",  required_argument, NULL, 'v' },
@@ -60,7 +61,7 @@ const struct option compiler_opts[] = {
 /**
  * \brief Print proper usage and exit with failure.
  */
-void
+static void
 usage_fail(const char *name)
 {
 
@@ -70,7 +71,10 @@ usage_fail(const char *name)
       "Possible options are:\n";
    printf(header, name);
    for (const struct option *o = compiler_opts; o->name != 0; ++o) {
-      printf("    --%s\n", o->name);
+      printf("    --%s", o->name);
+      if (o->has_arg == required_argument)
+         printf(" (mandatory)");
+      printf("\n");
    }
    exit(EXIT_FAILURE);
 }

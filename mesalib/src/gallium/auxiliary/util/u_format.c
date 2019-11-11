@@ -32,11 +32,11 @@
  * @author Jose Fonseca <jfonseca@vmware.com>
  */
 
-#include "u_math.h"
 #include "u_memory.h"
 #include "u_format.h"
 #include "u_format_s3tc.h"
 #include "u_surface.h"
+#include "util/u_math.h"
 
 #include "pipe/p_defines.h"
 
@@ -234,26 +234,6 @@ util_format_is_subsampled_422(enum pipe_format format)
       desc->block.height == 1 &&
       desc->block.bits == 32;
 }
-
-boolean
-util_format_is_supported(enum pipe_format format, unsigned bind)
-{
-   if (util_format_is_s3tc(format) && !util_format_s3tc_enabled) {
-      return FALSE;
-   }
-
-#ifndef TEXTURE_FLOAT_ENABLED
-   if ((bind & PIPE_BIND_RENDER_TARGET) &&
-       format != PIPE_FORMAT_R9G9B9E5_FLOAT &&
-       format != PIPE_FORMAT_R11G11B10_FLOAT &&
-       util_format_is_float(format)) {
-      return FALSE;
-   }
-#endif
-
-   return TRUE;
-}
-
 
 /**
  * Calculates the MRD for the depth format. MRD is used in depth bias
@@ -457,6 +437,30 @@ util_format_write_4i(enum pipe_format format,
    format_desc->pack_rgba_sint(dst_row, dst_stride, src_row, src_stride, w, h);
 }
 
+/**
+ * Check if we can safely memcopy from the source format to the dest format.
+ * This basically covers the cases of a "used" channel copied to a typeless
+ * channel, plus some 1-channel cases.
+ * Examples of compatible copy formats include:
+ *    b8g8r8a8_unorm -> b8g8r8x8_unorm
+ *    a8r8g8b8_unorm -> x8r8g8b8_unorm
+ *    b5g5r5a1_unorm -> b5g5r5x1_unorm
+ *    b4g4r4a4_unorm -> b4g4r4x4_unorm
+ *    l8_unorm -> r8_unorm
+ *    i8_unorm -> l8_unorm
+ *    i8_unorm -> a8_unorm
+ *    i8_unorm -> r8_unorm
+ *    l16_unorm -> r16_unorm
+ *    z24_unorm_s8_uint -> z24x8_unorm
+ *    s8_uint_z24_unorm -> x8z24_unorm
+ *    r8g8b8a8_unorm -> r8g8b8x8_unorm
+ *    a8b8g8r8_srgb -> x8b8g8r8_srgb
+ *    b8g8r8a8_srgb -> b8g8r8x8_srgb
+ *    a8r8g8b8_srgb -> x8r8g8b8_srgb
+ *    a8b8g8r8_unorm -> x8b8g8r8_unorm
+ *    r10g10b10a2_uscaled -> r10g10b10x2_uscaled
+ *    r10sg10sb10sa2u_norm -> r10g10b10x2_snorm
+ */
 boolean
 util_is_format_compatible(const struct util_format_description *src_desc,
                           const struct util_format_description *dst_desc)
@@ -534,6 +538,11 @@ util_format_fits_8unorm(const struct util_format_description *format_desc)
       return TRUE;
    case UTIL_FORMAT_LAYOUT_BPTC:
       if (format_desc->format == PIPE_FORMAT_BPTC_RGBA_UNORM)
+         return TRUE;
+      return FALSE;
+
+   case UTIL_FORMAT_LAYOUT_ETC:
+      if (format_desc->format == PIPE_FORMAT_ETC1_RGB8)
          return TRUE;
       return FALSE;
 

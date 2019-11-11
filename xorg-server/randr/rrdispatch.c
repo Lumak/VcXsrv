@@ -35,17 +35,17 @@ RRClientKnowsRates(ClientPtr pClient)
 static int
 ProcRRQueryVersion(ClientPtr client)
 {
-    xRRQueryVersionReply rep;
+    xRRQueryVersionReply rep = {
+        .type = X_Reply,
+        .sequenceNumber = client->sequence,
+        .length = 0
+    };
     REQUEST(xRRQueryVersionReq);
     rrClientPriv(client);
 
     REQUEST_SIZE_MATCH(xRRQueryVersionReq);
     pRRClient->major_version = stuff->majorVersion;
     pRRClient->minor_version = stuff->minorVersion;
-    memset(&rep, 0, sizeof(rep));
-    rep.type = X_Reply;
-    rep.sequenceNumber = client->sequence;
-    rep.length = 0;
 
     if (version_compare(stuff->majorVersion, stuff->minorVersion,
                         SERVER_RANDR_MAJOR_VERSION,
@@ -256,7 +256,11 @@ int (*ProcRandrVector[RRNumberRequests]) (ClientPtr) = {
         ProcRRChangeProviderProperty, /* 39 */
         ProcRRDeleteProviderProperty, /* 40 */
         ProcRRGetProviderProperty,    /* 41 */
+/* V1.5 additions */
         ProcRRGetMonitors,            /* 42 */
         ProcRRSetMonitor,             /* 43 */
         ProcRRDeleteMonitor,          /* 44 */
+/* V1.6 additions */
+        ProcRRCreateLease,            /* 45 */
+        ProcRRFreeLease,              /* 46 */
 };

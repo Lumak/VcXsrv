@@ -16,14 +16,14 @@
 static PSID worldsid, networksid, usersid;
 
 
-int got_advapi(void)
+bool got_advapi(void)
 {
-    static int attempted = FALSE;
-    static int successful;
+    static bool attempted = false;
+    static bool successful;
     static HMODULE advapi;
 
     if (!attempted) {
-        attempted = TRUE;
+        attempted = true;
         advapi = load_system32_dll("advapi32.dll");
         successful = advapi &&
             GET_WINDOWS_FUNCTION(advapi, GetSecurityInfo) &&
@@ -50,7 +50,7 @@ PSID get_user_sid(void)
     if (!got_advapi())
         goto cleanup;
 
-    if ((proc = OpenProcess(MAXIMUM_ALLOWED, FALSE,
+    if ((proc = OpenProcess(MAXIMUM_ALLOWED, false,
                             GetCurrentProcessId())) == NULL)
         goto cleanup;
 
@@ -92,17 +92,25 @@ PSID get_user_sid(void)
     return ret;
 }
 
-int getsids(char *error)
+bool getsids(char **error)
 {
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wmissing-braces"
+#endif
     SID_IDENTIFIER_AUTHORITY world_auth = SECURITY_WORLD_SID_AUTHORITY;
     SID_IDENTIFIER_AUTHORITY nt_auth = SECURITY_NT_AUTHORITY;
-    int ret;
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
-    error=NULL;
+    bool ret = false;
+
+    *error = NULL;
 
     if (!usersid) {
         if ((usersid = get_user_sid()) == NULL) {
-            error = dupprintf("unable to construct SID for current user: %s",
+            *error = dupprintf("unable to construct SID for current user: %s",
                                win_strerror(GetLastError()));
             goto cleanup;
         }
@@ -111,7 +119,7 @@ int getsids(char *error)
     if (!worldsid) {
         if (!AllocateAndInitializeSid(&world_auth, 1, SECURITY_WORLD_RID,
                                       0, 0, 0, 0, 0, 0, 0, &worldsid)) {
-            error = dupprintf("unable to construct SID for world: %s",
+            *error = dupprintf("unable to construct SID for world: %s",
                                win_strerror(GetLastError()));
             goto cleanup;
         }
@@ -120,39 +128,35 @@ int getsids(char *error)
     if (!networksid) {
         if (!AllocateAndInitializeSid(&nt_auth, 1, SECURITY_NETWORK_RID,
                                       0, 0, 0, 0, 0, 0, 0, &networksid)) {
-            error = dupprintf("unable to construct SID for "
+            *error = dupprintf("unable to construct SID for "
                                "local same-user access only: %s",
                                win_strerror(GetLastError()));
             goto cleanup;
         }
     }
 
-    ret=TRUE;
+    ret = true;
 
  cleanup:
-    if (ret) {
-      sfree(error);
-      error = NULL;
-    }
     return ret;
 }
   
 
-int make_private_security_descriptor(DWORD permissions,
-                                     PSECURITY_DESCRIPTOR *psd,
-                                     PACL *acl,
-                                     char **error)
+bool make_private_security_descriptor(DWORD permissions,
+                                      PSECURITY_DESCRIPTOR *psd,
+                                      PACL *acl,
+                                      char **error)
 {
     EXPLICIT_ACCESS ea[3];
     int acl_err;
-    int ret = FALSE;
+    bool ret = false;
 
 
     *psd = NULL;
     *acl = NULL;
     *error = NULL;
 
-    if (!getsids(*error))
+    if (!getsids(error))
       goto cleanup;
 
     memset(ea, 0, sizeof(ea));
@@ -193,19 +197,19 @@ int make_private_security_descriptor(DWORD permissions,
         goto cleanup;
     }
 
-    if (!SetSecurityDescriptorOwner(*psd, usersid, FALSE)) {
+    if (!SetSecurityDescriptorOwner(*psd, usersid, false)) {
         *error = dupprintf("unable to set owner in security descriptor: %s",
                            win_strerror(GetLastError()));
         goto cleanup;
     }
 
-    if (!SetSecurityDescriptorDacl(*psd, TRUE, *acl, FALSE)) {
+    if (!SetSecurityDescriptorDacl(*psd, true, *acl, false)) {
         *error = dupprintf("unable to set DACL in security descriptor: %s",
                            win_strerror(GetLastError()));
         goto cleanup;
     }
 
-    ret = TRUE;
+    ret = true;
 
   cleanup:
     if (!ret) {
@@ -224,11 +228,11 @@ int make_private_security_descriptor(DWORD permissions,
     return ret;
 }
 
-int setprocessacl(char *error)
+static bool really_restrict_process_acl(char **error)
 {
     EXPLICIT_ACCESS ea[2];
     int acl_err;
-    int ret=FALSE;
+    bool ret = false;
     PACL acl = NULL;
 
     static const DWORD nastyace=WRITE_DAC | WRITE_OWNER |
@@ -260,8 +264,8 @@ int setprocessacl(char *error)
     acl_err = p_SetEntriesInAclA(2, ea, NULL, &acl);
 
     if (acl_err != ERROR_SUCCESS || acl == NULL) {
-	error = dupprintf("unable to construct ACL: %s",
-			  win_strerror(acl_err));
+	*error = dupprintf("unable to construct ACL: %s",
+                           win_strerror(acl_err));
         goto cleanup;
     }
 
@@ -269,13 +273,13 @@ int setprocessacl(char *error)
         (GetCurrentProcess(), SE_KERNEL_OBJECT,
          OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
          usersid, NULL, acl, NULL)) {
-	error=dupprintf("Unable to set process ACL: %s",
-			win_strerror(GetLastError()));
+	*error = dupprintf("Unable to set process ACL: %s",
+                           win_strerror(GetLastError()));
 	goto cleanup;
     }
 		      
 
-    ret=TRUE;
+    ret=true;
     
   cleanup:
     if (!ret) {
@@ -285,5 +289,37 @@ int setprocessacl(char *error)
         }
     }
     return ret;
-}  
+}
 #endif /* !defined NO_SECURITY */
+
+/*
+ * Lock down our process's ACL, to present an obstacle to malware
+ * trying to write into its memory. This can't be a full defence,
+ * because well timed malware could attack us before this code runs -
+ * even if it was unconditionally run at the very start of main(),
+ * which we wouldn't want to do anyway because it turns out in practie
+ * that interfering with other processes in this way has significant
+ * non-infringing uses on Windows (e.g. screen reader software).
+ *
+ * If we've been requested to do this and are unsuccessful, bomb out
+ * via modalfatalbox rather than continue in a less protected mode.
+ *
+ * This function is intentionally outside the #ifndef NO_SECURITY that
+ * covers the rest of this file, because when PuTTY is compiled
+ * without the ability to restrict its ACL, we don't want it to
+ * silently pretend to honour the instruction to do so.
+ */
+void restrict_process_acl(void)
+{
+    char *error = NULL;
+    bool ret;
+
+#if !defined NO_SECURITY
+    ret = really_restrict_process_acl(&error);
+#else
+    ret = false;
+    error = dupstr("ACL restrictions not compiled into this binary");
+#endif
+    if (!ret)
+        modalfatalbox("Could not restrict process ACL: %s", error);
+}

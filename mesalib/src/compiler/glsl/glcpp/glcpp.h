@@ -27,11 +27,15 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#include "main/mtypes.h"
+#include "main/menums.h"
 
 #include "util/ralloc.h"
 
-#include "program/hash_table.h"
+#include "util/hash_table.h"
+
+#include "util/string_buffer.h"
+
+struct gl_context;
 
 #define yyscan_t void*
 
@@ -181,6 +185,7 @@ typedef void (*glcpp_extension_iterator)(
 		bool es);
 
 struct glcpp_parser {
+	void *linalloc;
 	yyscan_t scanner;
 	struct hash_table *defines;
 	active_list_t *active;
@@ -192,21 +197,30 @@ struct glcpp_parser {
 	int first_non_space_token_this_line;
 	int newline_as_space;
 	int in_control_line;
+	bool in_define;
 	int paren_count;
 	int commented_newlines;
 	skip_node_t *skip_stack;
 	int skipping;
 	token_list_t *lex_from_list;
 	token_node_t *lex_from_node;
-	char *output;
-	char *info_log;
-	size_t output_length;
-	size_t info_log_length;
+	struct _mesa_string_buffer *output;
+	struct _mesa_string_buffer *info_log;
 	int error;
 	glcpp_extension_iterator extensions;
+	const struct gl_extensions *extension_list;
 	void *state;
 	gl_api api;
 	unsigned version;
+
+	/**
+	 * Has the #version been set?
+	 *
+	 * A separate flag is used because any possible sentinel value in
+	 * \c ::version could also be set by a #version line.
+	 */
+	bool version_set;
+
 	bool has_new_line_number;
 	int new_line_number;
 	bool has_new_source_number;
@@ -215,7 +229,8 @@ struct glcpp_parser {
 };
 
 glcpp_parser_t *
-glcpp_parser_create (glcpp_extension_iterator extensions, void *state, gl_api api);
+glcpp_parser_create(const struct gl_extensions *extension_list,
+                    glcpp_extension_iterator extensions, void *state, gl_api api);
 
 int
 glcpp_parser_parse (glcpp_parser_t *parser);

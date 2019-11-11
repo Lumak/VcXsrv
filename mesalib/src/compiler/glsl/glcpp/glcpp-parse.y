@@ -29,8 +29,7 @@
 #include <inttypes.h>
 
 #include "glcpp.h"
-#include "main/core.h" /* for struct gl_extensions */
-#include "main/mtypes.h" /* for gl_api enum */
+#include "main/mtypes.h"
 
 static void
 yyerror(YYLTYPE *locp, glcpp_parser_t *parser, const char *error);
@@ -49,10 +48,11 @@ _define_function_macro(glcpp_parser_t *parser,
                        token_list_t *replacements);
 
 static string_list_t *
-_string_list_create(void *ctx);
+_string_list_create(glcpp_parser_t *parser);
 
 static void
-_string_list_append_item(string_list_t *list, const char *str);
+_string_list_append_item(glcpp_parser_t *parser, string_list_t *list,
+                         const char *str);
 
 static int
 _string_list_contains(string_list_t *list, const char *member, int *index);
@@ -67,10 +67,11 @@ static int
 _string_list_equal(string_list_t *a, string_list_t *b);
 
 static argument_list_t *
-_argument_list_create(void *ctx);
+_argument_list_create(glcpp_parser_t *parser);
 
 static void
-_argument_list_append(argument_list_t *list, token_list_t *argument);
+_argument_list_append(glcpp_parser_t *parser, argument_list_t *list,
+                      token_list_t *argument);
 
 static int
 _argument_list_length(argument_list_t *list);
@@ -78,18 +79,17 @@ _argument_list_length(argument_list_t *list);
 static token_list_t *
 _argument_list_member_at(argument_list_t *list, int index);
 
-/* Note: This function ralloc_steal()s the str pointer. */
 static token_t *
-_token_create_str(void *ctx, int type, char *str);
+_token_create_str(glcpp_parser_t *parser, int type, char *str);
 
 static token_t *
-_token_create_ival(void *ctx, int type, int ival);
+_token_create_ival(glcpp_parser_t *parser, int type, int ival);
 
 static token_list_t *
-_token_list_create(void *ctx);
+_token_list_create(glcpp_parser_t *parser);
 
 static void
-_token_list_append(token_list_t *list, token_t *token);
+_token_list_append(glcpp_parser_t *parser, token_list_t *list, token_t *token);
 
 static void
 _token_list_append_list(token_list_t *list, token_list_t *tail);
@@ -176,7 +176,7 @@ add_builtin_define(glcpp_parser_t *parser, const char *name, int value);
          * (such as the <HASH> and <DEFINE> start conditions in the lexer). */
 %token DEFINED ELIF_EXPANDED HASH_TOKEN DEFINE_TOKEN FUNC_IDENTIFIER OBJ_IDENTIFIER ELIF ELSE ENDIF ERROR_TOKEN IF IFDEF IFNDEF LINE PRAGMA UNDEF VERSION_TOKEN GARBAGE IDENTIFIER IF_EXPANDED INTEGER INTEGER_STRING LINE_EXPANDED NEWLINE OTHER PLACEHOLDER SPACE PLUS_PLUS MINUS_MINUS
 %token PASTE
-%type <ival> INTEGER operator SPACE integer_constant
+%type <ival> INTEGER operator SPACE integer_constant version_constant
 %type <expression_value> expression
 %type <str> IDENTIFIER FUNC_IDENTIFIER OBJ_IDENTIFIER INTEGER_STRING OTHER ERROR_TOKEN PRAGMA
 %type <string_list> identifier_list
@@ -208,8 +208,7 @@ line:
 |	SPACE control_line
 |	text_line {
 		_glcpp_parser_print_expanded_token_list (parser, $1);
-		ralloc_asprintf_rewrite_tail (&parser->output, &parser->output_length, "\n");
-		ralloc_free ($1);
+		_mesa_string_buffer_append_char(parser->output, '\n');
 	}
 |	expanded_line
 ;
@@ -228,20 +227,16 @@ expanded_line:
 |	LINE_EXPANDED integer_constant NEWLINE {
 		parser->has_new_line_number = 1;
 		parser->new_line_number = $2;
-		ralloc_asprintf_rewrite_tail (&parser->output,
-					      &parser->output_length,
-					      "#line %" PRIiMAX "\n",
-					      $2);
+		_mesa_string_buffer_printf(parser->output, "#line %" PRIiMAX "\n", $2);
 	}
 |	LINE_EXPANDED integer_constant integer_constant NEWLINE {
 		parser->has_new_line_number = 1;
 		parser->new_line_number = $2;
 		parser->has_new_source_number = 1;
 		parser->new_source_number = $3;
-		ralloc_asprintf_rewrite_tail (&parser->output,
-					      &parser->output_length,
-					      "#line %" PRIiMAX " %" PRIiMAX "\n",
-					      $2, $3);
+		_mesa_string_buffer_printf(parser->output,
+					   "#line %" PRIiMAX " %" PRIiMAX "\n",
+					    $2, $3);
 	}
 ;
 
@@ -259,7 +254,7 @@ define:
 
 control_line:
 	control_line_success {
-		ralloc_asprintf_rewrite_tail (&parser->output, &parser->output_length, "\n");
+		_mesa_string_buffer_append_char(parser->output, '\n');
 	}
 |	control_line_error
 |	HASH_TOKEN LINE pp_tokens NEWLINE {
@@ -277,44 +272,56 @@ control_line:
 control_line_success:
 	HASH_TOKEN DEFINE_TOKEN define
 |	HASH_TOKEN UNDEF IDENTIFIER NEWLINE {
-		macro_t *macro;
+		struct hash_entry *entry;
 
                 /* Section 3.4 (Preprocessor) of the GLSL ES 3.00 spec says:
                  *
                  *    It is an error to undefine or to redefine a built-in
                  *    (pre-defined) macro name.
                  *
-                 * The GLSL ES 1.00 spec does not contain this text.
+                 * The GLSL ES 1.00 spec does not contain this text, but
+                 * dEQP's preprocess test in GLES2 checks for it.
                  *
-                 * Section 3.3 (Preprocessor) of the GLSL 1.30 spec says:
+                 * Section 3.3 (Preprocessor) revision 7, of the GLSL 4.50
+                 * spec says:
                  *
-                 *    #define and #undef functionality are defined as is
-                 *    standard for C++ preprocessors for macro definitions
-                 *    both with and without macro parameters.
+                 *    By convention, all macro names containing two consecutive
+                 *    underscores ( __ ) are reserved for use by underlying
+                 *    software layers. Defining or undefining such a name
+                 *    in a shader does not itself result in an error, but may
+                 *    result in unintended behaviors that stem from having
+                 *    multiple definitions of the same name. All macro names
+                 *    prefixed with "GL_" (...) are also reseved, and defining
+                 *    such a name results in a compile-time error.
                  *
-                 * At least as far as I can tell GCC allow '#undef __FILE__'.
-                 * Furthermore, there are desktop OpenGL conformance tests
-                 * that expect '#undef __VERSION__' and '#undef
-                 * GL_core_profile' to work.
-                 *
-                 * Only disallow #undef of pre-defined macros on GLSL ES >=
-                 * 3.00 shaders.
+                 * The code below implements the same checks as GLSLang.
                  */
-		if (parser->is_gles &&
-                    parser->version >= 300 &&
-                    (strcmp("__LINE__", $3) == 0
-                     || strcmp("__FILE__", $3) == 0
-                     || strcmp("__VERSION__", $3) == 0
-                     || strncmp("GL_", $3, 3) == 0))
+		if (strncmp("GL_", $3, 3) == 0)
 			glcpp_error(& @1, parser, "Built-in (pre-defined)"
-				    " macro names cannot be undefined.");
-
-		macro = hash_table_find (parser->defines, $3);
-		if (macro) {
-			hash_table_remove (parser->defines, $3);
-			ralloc_free (macro);
+				    " names beginning with GL_ cannot be undefined.");
+		else if (strstr($3, "__") != NULL) {
+			if (parser->is_gles
+			    && parser->version >= 300
+			    && (strcmp("__LINE__", $3) == 0
+				|| strcmp("__FILE__", $3) == 0
+				|| strcmp("__VERSION__", $3) == 0)) {
+				glcpp_error(& @1, parser, "Built-in (pre-defined)"
+					    " names cannot be undefined.");
+			} else if (parser->is_gles && parser->version <= 300) {
+				glcpp_error(& @1, parser,
+					    " names containing consecutive underscores"
+					    " are reserved.");
+			} else {
+				glcpp_warning(& @1, parser,
+					      " names containing consecutive underscores"
+					      " are reserved.");
+			}
 		}
-		ralloc_free ($3);
+
+		entry = _mesa_hash_table_search (parser->defines, $3);
+		if (entry) {
+			_mesa_hash_table_remove (parser->defines, entry);
+		}
 	}
 |	HASH_TOKEN IF pp_tokens NEWLINE {
 		/* Be careful to only evaluate the 'if' expression if
@@ -348,13 +355,15 @@ control_line_success:
 		_glcpp_parser_skip_stack_push_if (parser, & @1, 0);
 	}
 |	HASH_TOKEN IFDEF IDENTIFIER junk NEWLINE {
-		macro_t *macro = hash_table_find (parser->defines, $3);
-		ralloc_free ($3);
+		struct hash_entry *entry =
+				_mesa_hash_table_search(parser->defines, $3);
+		macro_t *macro = entry ? entry->data : NULL;
 		_glcpp_parser_skip_stack_push_if (parser, & @1, macro != NULL);
 	}
 |	HASH_TOKEN IFNDEF IDENTIFIER junk NEWLINE {
-		macro_t *macro = hash_table_find (parser->defines, $3);
-		ralloc_free ($3);
+		struct hash_entry *entry =
+				_mesa_hash_table_search(parser->defines, $3);
+		macro_t *macro = entry ? entry->data : NULL;
 		_glcpp_parser_skip_stack_push_if (parser, & @3, macro == NULL);
 	}
 |	HASH_TOKEN ELIF pp_tokens NEWLINE {
@@ -419,14 +428,14 @@ control_line_success:
 |	HASH_TOKEN ENDIF {
 		_glcpp_parser_skip_stack_pop (parser, & @1);
 	} NEWLINE
-|	HASH_TOKEN VERSION_TOKEN integer_constant NEWLINE {
-		if (parser->version != 0) {
+|	HASH_TOKEN VERSION_TOKEN version_constant NEWLINE {
+		if (parser->version_set) {
 			glcpp_error(& @1, parser, "#version must appear on the first line");
 		}
 		_glcpp_parser_handle_version_declaration(parser, $3, NULL, true);
 	}
-|	HASH_TOKEN VERSION_TOKEN integer_constant IDENTIFIER NEWLINE {
-		if (parser->version != 0) {
+|	HASH_TOKEN VERSION_TOKEN version_constant IDENTIFIER NEWLINE {
+		if (parser->version_set) {
 			glcpp_error(& @1, parser, "#version must appear on the first line");
 		}
 		_glcpp_parser_handle_version_declaration(parser, $3, $4, true);
@@ -435,7 +444,7 @@ control_line_success:
 		glcpp_parser_resolve_implicit_version(parser);
 	}
 |	HASH_TOKEN PRAGMA NEWLINE {
-		ralloc_asprintf_rewrite_tail (&parser->output, &parser->output_length, "#%s", $2);
+		_mesa_string_buffer_printf(parser->output, "#%s", $2);
 	}
 ;
 
@@ -453,16 +462,22 @@ control_line_error:
 
 integer_constant:
 	INTEGER_STRING {
-		if (strlen ($1) >= 3 && strncmp ($1, "0x", 2) == 0) {
-			$$ = strtoll ($1 + 2, NULL, 16);
-		} else if ($1[0] == '0') {
-			$$ = strtoll ($1, NULL, 8);
-		} else {
-			$$ = strtoll ($1, NULL, 10);
-		}
+		/* let strtoll detect the base */
+		$$ = strtoll ($1, NULL, 0);
 	}
 |	INTEGER {
 		$$ = $1;
+	}
+
+version_constant:
+	INTEGER_STRING {
+	   /* Both octal and hexadecimal constants begin with 0. */
+	   if ($1[0] == '0' && $1[1] != '\0') {
+		glcpp_error(&@1, parser, "invalid #version \"%s\" (not a decimal constant)", $1);
+		$$ = 0;
+	   } else {
+		$$ = strtoll($1, NULL, 10);
+	   }
 	}
 
 expression:
@@ -473,7 +488,7 @@ expression:
 |	IDENTIFIER {
 		$$.value = 0;
 		if (parser->is_gles)
-			$$.undefined_macro = ralloc_strdup (parser, $1);
+			$$.undefined_macro = linear_strdup(parser->linalloc, $1);
 		else
 			$$.undefined_macro = NULL;
 	}
@@ -645,13 +660,11 @@ expression:
 identifier_list:
 	IDENTIFIER {
 		$$ = _string_list_create (parser);
-		_string_list_append_item ($$, $1);
-		ralloc_steal ($$, $1);
+		_string_list_append_item (parser, $$, $1);
 	}
 |	identifier_list ',' IDENTIFIER {
 		$$ = $1;	
-		_string_list_append_item ($$, $3);
-		ralloc_steal ($$, $3);
+		_string_list_append_item (parser, $$, $3);
 	}
 ;
 
@@ -676,11 +689,11 @@ pp_tokens:
 	preprocessing_token {
 		parser->space_tokens = 1;
 		$$ = _token_list_create (parser);
-		_token_list_append ($$, $1);
+		_token_list_append (parser, $$, $1);
 	}
 |	pp_tokens preprocessing_token {
 		$$ = $1;
-		_token_list_append ($$, $2);
+		_token_list_append (parser, $$, $2);
 	}
 ;
 
@@ -750,11 +763,11 @@ operator:
 %%
 
 string_list_t *
-_string_list_create(void *ctx)
+_string_list_create(glcpp_parser_t *parser)
 {
    string_list_t *list;
 
-   list = ralloc (ctx, string_list_t);
+   list = linear_alloc_child(parser->linalloc, sizeof(string_list_t));
    list->head = NULL;
    list->tail = NULL;
 
@@ -762,12 +775,13 @@ _string_list_create(void *ctx)
 }
 
 void
-_string_list_append_item(string_list_t *list, const char *str)
+_string_list_append_item(glcpp_parser_t *parser, string_list_t *list,
+                         const char *str)
 {
    string_node_t *node;
 
-   node = ralloc (list, string_node_t);
-   node->str = ralloc_strdup (node, str);
+   node = linear_alloc_child(parser->linalloc, sizeof(string_node_t));
+   node->str = linear_strdup(parser->linalloc, str);
 
    node->next = NULL;
 
@@ -860,11 +874,11 @@ _string_list_equal(string_list_t *a, string_list_t *b)
 }
 
 argument_list_t *
-_argument_list_create(void *ctx)
+_argument_list_create(glcpp_parser_t *parser)
 {
    argument_list_t *list;
 
-   list = ralloc (ctx, argument_list_t);
+   list = linear_alloc_child(parser->linalloc, sizeof(argument_list_t));
    list->head = NULL;
    list->tail = NULL;
 
@@ -872,11 +886,12 @@ _argument_list_create(void *ctx)
 }
 
 void
-_argument_list_append(argument_list_t *list, token_list_t *argument)
+_argument_list_append(glcpp_parser_t *parser,
+                      argument_list_t *list, token_list_t *argument)
 {
    argument_node_t *node;
 
-   node = ralloc (list, argument_node_t);
+   node = linear_alloc_child(parser->linalloc, sizeof(argument_node_t));
    node->argument = argument;
 
    node->next = NULL;
@@ -927,27 +942,24 @@ _argument_list_member_at(argument_list_t *list, int index)
    return NULL;
 }
 
-/* Note: This function ralloc_steal()s the str pointer. */
 token_t *
-_token_create_str(void *ctx, int type, char *str)
+_token_create_str(glcpp_parser_t *parser, int type, char *str)
 {
    token_t *token;
 
-   token = ralloc (ctx, token_t);
+   token = linear_alloc_child(parser->linalloc, sizeof(token_t));
    token->type = type;
    token->value.str = str;
-
-   ralloc_steal (token, str);
 
    return token;
 }
 
 token_t *
-_token_create_ival(void *ctx, int type, int ival)
+_token_create_ival(glcpp_parser_t *parser, int type, int ival)
 {
    token_t *token;
 
-   token = ralloc (ctx, token_t);
+   token = linear_alloc_child(parser->linalloc, sizeof(token_t));
    token->type = type;
    token->value.ival = ival;
 
@@ -955,11 +967,11 @@ _token_create_ival(void *ctx, int type, int ival)
 }
 
 token_list_t *
-_token_list_create(void *ctx)
+_token_list_create(glcpp_parser_t *parser)
 {
    token_list_t *list;
 
-   list = ralloc (ctx, token_list_t);
+   list = linear_alloc_child(parser->linalloc, sizeof(token_list_t));
    list->head = NULL;
    list->tail = NULL;
    list->non_space_tail = NULL;
@@ -968,11 +980,11 @@ _token_list_create(void *ctx)
 }
 
 void
-_token_list_append(token_list_t *list, token_t *token)
+_token_list_append(glcpp_parser_t *parser, token_list_t *list, token_t *token)
 {
    token_node_t *node;
 
-   node = ralloc (list, token_node_t);
+   node = linear_alloc_child(parser->linalloc, sizeof(token_node_t));
    node->token = token;
    node->next = NULL;
 
@@ -1004,7 +1016,7 @@ _token_list_append_list(token_list_t *list, token_list_t *tail)
 }
 
 static token_list_t *
-_token_list_copy(void *ctx, token_list_t *other)
+_token_list_copy(glcpp_parser_t *parser, token_list_t *other)
 {
    token_list_t *copy;
    token_node_t *node;
@@ -1012,11 +1024,11 @@ _token_list_copy(void *ctx, token_list_t *other)
    if (other == NULL)
       return NULL;
 
-   copy = _token_list_create (ctx);
+   copy = _token_list_create (parser);
    for (node = other->head; node; node = node->next) {
-      token_t *new_token = ralloc (copy, token_t);
+      token_t *new_token = linear_alloc_child(parser->linalloc, sizeof(token_t));
       *new_token = *node->token;
-      _token_list_append (copy, new_token);
+      _token_list_append (parser, copy, new_token);
    }
 
    return copy;
@@ -1025,18 +1037,9 @@ _token_list_copy(void *ctx, token_list_t *other)
 static void
 _token_list_trim_trailing_space(token_list_t *list)
 {
-   token_node_t *tail, *next;
-
    if (list->non_space_tail) {
-      tail = list->non_space_tail->next;
       list->non_space_tail->next = NULL;
       list->tail = list->non_space_tail;
-
-      while (tail) {
-         next = tail->next;
-         ralloc_free (tail);
-         tail = next;
-      }
    }
 }
 
@@ -1071,6 +1074,20 @@ _token_list_equal_ignoring_space(token_list_t *a, token_list_t *b)
 
    while (1)
    {
+      if (node_a == NULL && node_b == NULL)
+         break;
+
+      /* Ignore trailing whitespace */
+      if (node_a == NULL && node_b->token->type == SPACE) {
+         while (node_b && node_b->token->type == SPACE)
+            node_b = node_b->next;
+      }
+
+      if (node_b == NULL && node_a->token->type == SPACE) {
+         while (node_a && node_a->token->type == SPACE)
+            node_a = node_a->next;
+      }
+
       if (node_a == NULL && node_b == NULL)
          break;
 
@@ -1114,60 +1131,60 @@ _token_list_equal_ignoring_space(token_list_t *a, token_list_t *b)
 }
 
 static void
-_token_print(char **out, size_t *len, token_t *token)
+_token_print(struct _mesa_string_buffer *out, token_t *token)
 {
    if (token->type < 256) {
-      ralloc_asprintf_rewrite_tail (out, len, "%c", token->type);
+      _mesa_string_buffer_append_char(out, token->type);
       return;
    }
 
    switch (token->type) {
    case INTEGER:
-      ralloc_asprintf_rewrite_tail (out, len, "%" PRIiMAX, token->value.ival);
+      _mesa_string_buffer_printf(out, "%" PRIiMAX, token->value.ival);
       break;
    case IDENTIFIER:
    case INTEGER_STRING:
    case OTHER:
-      ralloc_asprintf_rewrite_tail (out, len, "%s", token->value.str);
+      _mesa_string_buffer_append(out, token->value.str);
       break;
    case SPACE:
-      ralloc_asprintf_rewrite_tail (out, len, " ");
+      _mesa_string_buffer_append_char(out, ' ');
       break;
    case LEFT_SHIFT:
-      ralloc_asprintf_rewrite_tail (out, len, "<<");
+      _mesa_string_buffer_append(out, "<<");
       break;
    case RIGHT_SHIFT:
-      ralloc_asprintf_rewrite_tail (out, len, ">>");
+      _mesa_string_buffer_append(out, ">>");
       break;
    case LESS_OR_EQUAL:
-      ralloc_asprintf_rewrite_tail (out, len, "<=");
+      _mesa_string_buffer_append(out, "<=");
       break;
    case GREATER_OR_EQUAL:
-      ralloc_asprintf_rewrite_tail (out, len, ">=");
+      _mesa_string_buffer_append(out, ">=");
       break;
    case EQUAL:
-      ralloc_asprintf_rewrite_tail (out, len, "==");
+      _mesa_string_buffer_append(out, "==");
       break;
    case NOT_EQUAL:
-      ralloc_asprintf_rewrite_tail (out, len, "!=");
+      _mesa_string_buffer_append(out, "!=");
       break;
    case AND:
-      ralloc_asprintf_rewrite_tail (out, len, "&&");
+      _mesa_string_buffer_append(out, "&&");
       break;
    case OR:
-      ralloc_asprintf_rewrite_tail (out, len, "||");
+      _mesa_string_buffer_append(out, "||");
       break;
    case PASTE:
-      ralloc_asprintf_rewrite_tail (out, len, "##");
+      _mesa_string_buffer_append(out, "##");
       break;
    case PLUS_PLUS:
-      ralloc_asprintf_rewrite_tail (out, len, "++");
+      _mesa_string_buffer_append(out, "++");
       break;
    case MINUS_MINUS:
-      ralloc_asprintf_rewrite_tail (out, len, "--");
+      _mesa_string_buffer_append(out, "--");
       break;
    case DEFINED:
-      ralloc_asprintf_rewrite_tail (out, len, "defined");
+      _mesa_string_buffer_append(out, "defined");
       break;
    case PLACEHOLDER:
       /* Nothing to print. */
@@ -1179,9 +1196,9 @@ _token_print(char **out, size_t *len, token_t *token)
    }
 }
 
-/* Return a new token (ralloc()ed off of 'token') formed by pasting
- * 'token' and 'other'. Note that this function may return 'token' or
- * 'other' directly rather than allocating anything new.
+/* Return a new token formed by pasting 'token' and 'other'. Note that this
+ * function may return 'token' or 'other' directly rather than allocating
+ * anything new.
  *
  * Caution: Only very cursory error-checking is performed to see if
  * the final result is a valid single token. */
@@ -1203,31 +1220,31 @@ _token_paste(glcpp_parser_t *parser, token_t *token, token_t *other)
    switch (token->type) {
    case '<':
       if (other->type == '<')
-         combined = _token_create_ival (token, LEFT_SHIFT, LEFT_SHIFT);
+         combined = _token_create_ival (parser, LEFT_SHIFT, LEFT_SHIFT);
       else if (other->type == '=')
-         combined = _token_create_ival (token, LESS_OR_EQUAL, LESS_OR_EQUAL);
+         combined = _token_create_ival (parser, LESS_OR_EQUAL, LESS_OR_EQUAL);
       break;
    case '>':
       if (other->type == '>')
-         combined = _token_create_ival (token, RIGHT_SHIFT, RIGHT_SHIFT);
+         combined = _token_create_ival (parser, RIGHT_SHIFT, RIGHT_SHIFT);
       else if (other->type == '=')
-         combined = _token_create_ival (token, GREATER_OR_EQUAL, GREATER_OR_EQUAL);
+         combined = _token_create_ival (parser, GREATER_OR_EQUAL, GREATER_OR_EQUAL);
       break;
    case '=':
       if (other->type == '=')
-         combined = _token_create_ival (token, EQUAL, EQUAL);
+         combined = _token_create_ival (parser, EQUAL, EQUAL);
       break;
    case '!':
       if (other->type == '=')
-         combined = _token_create_ival (token, NOT_EQUAL, NOT_EQUAL);
+         combined = _token_create_ival (parser, NOT_EQUAL, NOT_EQUAL);
       break;
    case '&':
       if (other->type == '&')
-         combined = _token_create_ival (token, AND, AND);
+         combined = _token_create_ival (parser, AND, AND);
       break;
    case '|':
       if (other->type == '|')
-         combined = _token_create_ival (token, OR, OR);
+         combined = _token_create_ival (parser, OR, OR);
       break;
    }
 
@@ -1271,14 +1288,14 @@ _token_paste(glcpp_parser_t *parser, token_t *token, token_t *other)
       }
 
       if (token->type == INTEGER)
-         str = ralloc_asprintf (token, "%" PRIiMAX, token->value.ival);
+         str = linear_asprintf(parser->linalloc, "%" PRIiMAX, token->value.ival);
       else
-         str = ralloc_strdup (token, token->value.str);
+         str = linear_strdup(parser->linalloc, token->value.str);
 
       if (other->type == INTEGER)
-         ralloc_asprintf_append (&str, "%" PRIiMAX, other->value.ival);
+         linear_asprintf_append(parser->linalloc, &str, "%" PRIiMAX, other->value.ival);
       else
-         ralloc_strcat (&str, other->value.str);
+         linear_strcat(parser->linalloc, &str, other->value.str);
 
       /* New token is same type as original token, unless we
        * started with an integer, in which case we will be
@@ -1287,18 +1304,18 @@ _token_paste(glcpp_parser_t *parser, token_t *token, token_t *other)
       if (combined_type == INTEGER)
          combined_type = INTEGER_STRING;
 
-      combined = _token_create_str (token, combined_type, str);
+      combined = _token_create_str (parser, combined_type, str);
       combined->location = token->location;
       return combined;
    }
 
     FAIL:
    glcpp_error (&token->location, parser, "");
-   ralloc_asprintf_rewrite_tail (&parser->info_log, &parser->info_log_length, "Pasting \"");
-   _token_print (&parser->info_log, &parser->info_log_length, token);
-   ralloc_asprintf_rewrite_tail (&parser->info_log, &parser->info_log_length, "\" and \"");
-   _token_print (&parser->info_log, &parser->info_log_length, other);
-   ralloc_asprintf_rewrite_tail (&parser->info_log, &parser->info_log_length, "\" does not give a valid preprocessing token.\n");
+   _mesa_string_buffer_append(parser->info_log, "Pasting \"");
+   _token_print(parser->info_log, token);
+   _mesa_string_buffer_append(parser->info_log, "\" and \"");
+   _token_print(parser->info_log, other);
+   _mesa_string_buffer_append(parser->info_log, "\" does not give a valid preprocessing token.\n");
 
    return token;
 }
@@ -1312,7 +1329,7 @@ _token_list_print(glcpp_parser_t *parser, token_list_t *list)
       return;
 
    for (node = list->head; node; node = node->next)
-      _token_print (&parser->output, &parser->output_length, node->token);
+      _token_print(parser->output, node->token);
 }
 
 void
@@ -1330,22 +1347,30 @@ add_builtin_define(glcpp_parser_t *parser, const char *name, int value)
    tok = _token_create_ival (parser, INTEGER, value);
 
    list = _token_list_create(parser);
-   _token_list_append(list, tok);
+   _token_list_append(parser, list, tok);
    _define_object_macro(parser, NULL, name, list);
 }
 
+/* Initial output buffer size, 4096 minus ralloc() overhead. It was selected
+ * to minimize total amount of allocated memory during shader-db run.
+ */
+#define INITIAL_PP_OUTPUT_BUF_SIZE 4048
+
 glcpp_parser_t *
-glcpp_parser_create(glcpp_extension_iterator extensions, void *state, gl_api api)
+glcpp_parser_create(const struct gl_extensions *extension_list,
+                    glcpp_extension_iterator extensions, void *state, gl_api api)
 {
    glcpp_parser_t *parser;
 
    parser = ralloc (NULL, glcpp_parser_t);
 
    glcpp_lex_init_extra (parser, &parser->scanner);
-   parser->defines = hash_table_ctor(32, hash_table_string_hash,
-                                     hash_table_string_compare);
+   parser->defines = _mesa_hash_table_create(NULL, _mesa_key_hash_string,
+                                             _mesa_key_string_equal);
+   parser->linalloc = linear_alloc_parent(parser, 0);
    parser->active = NULL;
    parser->lexing_directive = 0;
+   parser->lexing_version_directive = 0;
    parser->space_tokens = 1;
    parser->last_token_was_newline = 0;
    parser->last_token_was_space = 0;
@@ -1361,21 +1386,25 @@ glcpp_parser_create(glcpp_extension_iterator extensions, void *state, gl_api api
    parser->lex_from_list = NULL;
    parser->lex_from_node = NULL;
 
-   parser->output = ralloc_strdup(parser, "");
-   parser->output_length = 0;
-   parser->info_log = ralloc_strdup(parser, "");
-   parser->info_log_length = 0;
+   parser->output = _mesa_string_buffer_create(parser,
+                                               INITIAL_PP_OUTPUT_BUF_SIZE);
+   parser->info_log = _mesa_string_buffer_create(parser,
+                                                 INITIAL_PP_OUTPUT_BUF_SIZE);
    parser->error = 0;
 
    parser->extensions = extensions;
+   parser->extension_list = extension_list;
    parser->state = state;
    parser->api = api;
    parser->version = 0;
+   parser->version_set = false;
 
    parser->has_new_line_number = 0;
    parser->new_line_number = 1;
    parser->has_new_source_number = 0;
    parser->new_source_number = 0;
+
+   parser->is_gles = false;
 
    return parser;
 }
@@ -1384,7 +1413,7 @@ void
 glcpp_parser_destroy(glcpp_parser_t *parser)
 {
    glcpp_lex_destroy (parser->scanner);
-   hash_table_dtor (parser->defines);
+   _mesa_hash_table_destroy(parser->defines, NULL);
    ralloc_free (parser);
 }
 
@@ -1419,7 +1448,8 @@ typedef enum function_status
  *      Macro name is not followed by a balanced set of parentheses.
  */
 static function_status_t
-_arguments_parse(argument_list_t *arguments, token_node_t *node,
+_arguments_parse(glcpp_parser_t *parser,
+                 argument_list_t *arguments, token_node_t *node,
                  token_node_t **last)
 {
    token_list_t *argument;
@@ -1436,8 +1466,8 @@ _arguments_parse(argument_list_t *arguments, token_node_t *node,
 
    node = node->next;
 
-   argument = _token_list_create (arguments);
-   _argument_list_append (arguments, argument);
+   argument = _token_list_create (parser);
+   _argument_list_append (parser, arguments, argument);
 
    for (paren_count = 1; node; node = node->next) {
       if (node->token->type == '(') {
@@ -1450,15 +1480,15 @@ _arguments_parse(argument_list_t *arguments, token_node_t *node,
 
       if (node->token->type == ',' && paren_count == 1) {
          _token_list_trim_trailing_space (argument);
-         argument = _token_list_create (arguments);
-         _argument_list_append (arguments, argument);
+         argument = _token_list_create (parser);
+         _argument_list_append (parser, arguments, argument);
       } else {
          if (argument->head == NULL) {
             /* Don't treat initial whitespace as part of the argument. */
             if (node->token->type == SPACE)
                continue;
          }
-         _token_list_append (argument, node->token);
+         _token_list_append(parser, argument, node->token);
       }
    }
 
@@ -1471,28 +1501,28 @@ _arguments_parse(argument_list_t *arguments, token_node_t *node,
 }
 
 static token_list_t *
-_token_list_create_with_one_ival(void *ctx, int type, int ival)
+_token_list_create_with_one_ival(glcpp_parser_t *parser, int type, int ival)
 {
    token_list_t *list;
    token_t *node;
 
-   list = _token_list_create(ctx);
-   node = _token_create_ival(list, type, ival);
-   _token_list_append(list, node);
+   list = _token_list_create(parser);
+   node = _token_create_ival(parser, type, ival);
+   _token_list_append(parser, list, node);
 
    return list;
 }
 
 static token_list_t *
-_token_list_create_with_one_space(void *ctx)
+_token_list_create_with_one_space(glcpp_parser_t *parser)
 {
-   return _token_list_create_with_one_ival(ctx, SPACE, SPACE);
+   return _token_list_create_with_one_ival(parser, SPACE, SPACE);
 }
 
 static token_list_t *
-_token_list_create_with_one_integer(void *ctx, int ival)
+_token_list_create_with_one_integer(glcpp_parser_t *parser, int ival)
 {
-   return _token_list_create_with_one_ival(ctx, INTEGER, ival);
+   return _token_list_create_with_one_ival(parser, INTEGER, ival);
 }
 
 /* Evaluate a DEFINED token node (based on subsequent tokens in the list).
@@ -1563,8 +1593,8 @@ _glcpp_parser_evaluate_defined(glcpp_parser_t *parser, token_node_t *node,
 
    *last = node;
 
-   return hash_table_find(parser->defines,
-                          argument->token->value.str) ? 1 : 0;
+   return _mesa_hash_table_search(parser->defines,
+                                  argument->token->value.str) ? 1 : 0;
 
 FAIL:
    glcpp_error (&defined->token->location, parser,
@@ -1596,8 +1626,8 @@ _glcpp_parser_evaluate_defined_in_list(glcpp_parser_t *parser,
       if (value == -1)
          goto NEXT;
 
-      replacement = ralloc (list, token_node_t);
-      replacement->token = _token_create_ival (list, INTEGER, value);
+      replacement = linear_alloc_child(parser->linalloc, sizeof(token_node_t));
+      replacement->token = _token_create_ival (parser, INTEGER, value);
 
       /* Splice replacement node into list, replacing from "node"
        * through "last". */
@@ -1634,7 +1664,7 @@ _glcpp_parser_expand_and_lex_from(glcpp_parser_t *parser, int head_token_type,
 
    expanded = _token_list_create (parser);
    token = _token_create_ival (parser, head_token_type, head_token_type);
-   _token_list_append (expanded, token);
+   _token_list_append (parser, expanded, token);
    _glcpp_parser_expand_token_list (parser, list, mode);
    _token_list_append_list (expanded, list);
    glcpp_parser_lex_from (parser, expanded);
@@ -1705,6 +1735,7 @@ static token_list_t *
 _glcpp_parser_expand_function(glcpp_parser_t *parser, token_node_t *node,
                               token_node_t **last, expansion_mode_t mode)
 {
+   struct hash_entry *entry;
    macro_t *macro;
    const char *identifier;
    argument_list_t *arguments;
@@ -1714,12 +1745,13 @@ _glcpp_parser_expand_function(glcpp_parser_t *parser, token_node_t *node,
 
    identifier = node->token->value.str;
 
-   macro = hash_table_find(parser->defines, identifier);
+   entry = _mesa_hash_table_search(parser->defines, identifier);
+   macro = entry ? entry->data : NULL;
 
    assert(macro->is_function);
 
    arguments = _argument_list_create(parser);
-   status = _arguments_parse(arguments, node, last);
+   status = _arguments_parse(parser, arguments, node, last);
 
    switch (status) {
    case FUNCTION_STATUS_SUCCESS:
@@ -1733,7 +1765,6 @@ _glcpp_parser_expand_function(glcpp_parser_t *parser, token_node_t *node,
 
    /* Replace a macro defined as empty with a SPACE token. */
    if (macro->replacements == NULL) {
-      ralloc_free(arguments);
       return _token_list_create_with_one_space(parser);
    }
 
@@ -1750,7 +1781,7 @@ _glcpp_parser_expand_function(glcpp_parser_t *parser, token_node_t *node,
    }
 
    /* Perform argument substitution on the replacement list. */
-   substituted = _token_list_create(arguments);
+   substituted = _token_list_create(parser);
 
    for (node = macro->replacements->head; node; node = node->next) {
       if (node->token->type == IDENTIFIER &&
@@ -1768,12 +1799,12 @@ _glcpp_parser_expand_function(glcpp_parser_t *parser, token_node_t *node,
          } else {
             token_t *new_token;
 
-            new_token = _token_create_ival(substituted, PLACEHOLDER,
+            new_token = _token_create_ival(parser, PLACEHOLDER,
                                            PLACEHOLDER);
-            _token_list_append(substituted, new_token);
+            _token_list_append(parser, substituted, new_token);
          }
       } else {
-         _token_list_append(substituted, node->token);
+         _token_list_append(parser, substituted, node->token);
       }
    }
 
@@ -1811,6 +1842,7 @@ _glcpp_parser_expand_node(glcpp_parser_t *parser, token_node_t *node,
 {
    token_t *token = node->token;
    const char *identifier;
+   struct hash_entry *entry;
    macro_t *macro;
 
    /* We only expand identifiers */
@@ -1823,14 +1855,19 @@ _glcpp_parser_expand_node(glcpp_parser_t *parser, token_node_t *node,
 
    /* Special handling for __LINE__ and __FILE__, (not through
     * the hash table). */
-   if (strcmp(identifier, "__LINE__") == 0)
-      return _token_list_create_with_one_integer(parser, node->token->location.first_line);
+   if (*identifier == '_') {
+      if (strcmp(identifier, "__LINE__") == 0)
+         return _token_list_create_with_one_integer(parser,
+                                                    node->token->location.first_line);
 
-   if (strcmp(identifier, "__FILE__") == 0)
-      return _token_list_create_with_one_integer(parser, node->token->location.source);
+      if (strcmp(identifier, "__FILE__") == 0)
+         return _token_list_create_with_one_integer(parser,
+                                                    node->token->location.source);
+   }
 
    /* Look up this identifier in the hash table. */
-   macro = hash_table_find(parser->defines, identifier);
+   entry = _mesa_hash_table_search(parser->defines, identifier);
+   macro = entry ? entry->data : NULL;
 
    /* Not a macro, so no expansion needed. */
    if (macro == NULL)
@@ -1845,10 +1882,10 @@ _glcpp_parser_expand_node(glcpp_parser_t *parser, token_node_t *node,
       token_list_t *expansion;
       token_t *final;
 
-      str = ralloc_strdup(parser, token->value.str);
+      str = linear_strdup(parser->linalloc, token->value.str);
       final = _token_create_str(parser, OTHER, str);
       expansion = _token_list_create(parser);
-      _token_list_append(expansion, final);
+      _token_list_append(parser, expansion, final);
       return expansion;
    }
 
@@ -1880,8 +1917,8 @@ _parser_active_list_push(glcpp_parser_t *parser, const char *identifier,
 {
    active_list_t *node;
 
-   node = ralloc(parser->active, active_list_t);
-   node->identifier = ralloc_strdup(node, identifier);
+   node = linear_alloc_child(parser->linalloc, sizeof(active_list_t));
+   node->identifier = linear_strdup(parser->linalloc, identifier);
    node->marker = marker;
    node->next = parser->active;
 
@@ -1899,8 +1936,6 @@ _parser_active_list_pop(glcpp_parser_t *parser)
    }
 
    node = parser->active->next;
-   ralloc_free (parser->active);
-
    parser->active = node;
 }
 
@@ -2080,6 +2115,7 @@ _define_object_macro(glcpp_parser_t *parser, YYLTYPE *loc,
                      const char *identifier, token_list_t *replacements)
 {
    macro_t *macro, *previous;
+   struct hash_entry *entry;
 
    /* We define pre-defined macros before we've started parsing the actual
     * file. So if there's no location defined yet, that's what were doing and
@@ -2087,24 +2123,23 @@ _define_object_macro(glcpp_parser_t *parser, YYLTYPE *loc,
    if (loc != NULL)
       _check_for_reserved_macro_name(parser, loc, identifier);
 
-   macro = ralloc (parser, macro_t);
+   macro = linear_alloc_child(parser->linalloc, sizeof(macro_t));
 
    macro->is_function = 0;
    macro->parameters = NULL;
-   macro->identifier = ralloc_strdup (macro, identifier);
+   macro->identifier = linear_strdup(parser->linalloc, identifier);
    macro->replacements = replacements;
-   ralloc_steal (macro, replacements);
 
-   previous = hash_table_find (parser->defines, identifier);
+   entry = _mesa_hash_table_search(parser->defines, identifier);
+   previous = entry ? entry->data : NULL;
    if (previous) {
       if (_macro_equal (macro, previous)) {
-         ralloc_free (macro);
          return;
       }
       glcpp_error (loc, parser, "Redefinition of macro %s\n",  identifier);
    }
 
-   hash_table_insert (parser->defines, macro, identifier);
+   _mesa_hash_table_insert (parser->defines, identifier, macro);
 }
 
 void
@@ -2113,6 +2148,7 @@ _define_function_macro(glcpp_parser_t *parser, YYLTYPE *loc,
                        token_list_t *replacements)
 {
    macro_t *macro, *previous;
+   struct hash_entry *entry;
    const char *dup;
 
    _check_for_reserved_macro_name(parser, loc, identifier);
@@ -2122,24 +2158,23 @@ _define_function_macro(glcpp_parser_t *parser, YYLTYPE *loc,
       glcpp_error (loc, parser, "Duplicate macro parameter \"%s\"", dup);
    }
 
-   macro = ralloc (parser, macro_t);
-   ralloc_steal (macro, parameters);
-   ralloc_steal (macro, replacements);
+   macro = linear_alloc_child(parser->linalloc, sizeof(macro_t));
 
    macro->is_function = 1;
    macro->parameters = parameters;
-   macro->identifier = ralloc_strdup (macro, identifier);
+   macro->identifier = linear_strdup(parser->linalloc, identifier);
    macro->replacements = replacements;
-   previous = hash_table_find (parser->defines, identifier);
+
+   entry = _mesa_hash_table_search(parser->defines, identifier);
+   previous = entry ? entry->data : NULL;
    if (previous) {
       if (_macro_equal (macro, previous)) {
-         ralloc_free (macro);
          return;
       }
       glcpp_error (loc, parser, "Redefinition of macro %s\n", identifier);
    }
 
-   hash_table_insert(parser->defines, macro, identifier);
+   _mesa_hash_table_insert(parser->defines, identifier, macro);
 }
 
 static int
@@ -2185,9 +2220,9 @@ glcpp_parser_lex(YYSTYPE *yylval, YYLTYPE *yylloc, glcpp_parser_t *parser)
                ret == ENDIF || ret == HASH_TOKEN) {
          parser->in_control_line = 1;
       } else if (ret == IDENTIFIER) {
-         macro_t *macro;
-         macro = hash_table_find (parser->defines,
-                   yylval->str);
+         struct hash_entry *entry = _mesa_hash_table_search(parser->defines,
+                                                            yylval->str);
+         macro_t *macro = entry ? entry->data : NULL;
          if (macro && macro->is_function) {
             parser->newline_as_space = 1;
             parser->paren_count = 0;
@@ -2200,7 +2235,6 @@ glcpp_parser_lex(YYSTYPE *yylval, YYLTYPE *yylloc, glcpp_parser_t *parser)
    node = parser->lex_from_node;
 
    if (node == NULL) {
-      ralloc_free (parser->lex_from_list);
       parser->lex_from_list = NULL;
       return NEWLINE;
    }
@@ -2226,16 +2260,13 @@ glcpp_parser_lex_from(glcpp_parser_t *parser, token_list_t *list)
    for (node = list->head; node; node = node->next) {
       if (node->token->type == SPACE)
          continue;
-      _token_list_append (parser->lex_from_list, node->token);
+      _token_list_append (parser,  parser->lex_from_list, node->token);
    }
-
-   ralloc_free (list);
 
    parser->lex_from_node = parser->lex_from_list->head;
 
    /* It's possible the list consisted of nothing but whitespace. */
    if (parser->lex_from_node == NULL) {
-      ralloc_free (parser->lex_from_list);
       parser->lex_from_list = NULL;
    }
 }
@@ -2250,7 +2281,7 @@ _glcpp_parser_skip_stack_push_if(glcpp_parser_t *parser, YYLTYPE *loc,
    if (parser->skip_stack)
       current = parser->skip_stack->type;
 
-   node = ralloc (parser, skip_node_t);
+   node = linear_alloc_child(parser->linalloc, sizeof(skip_node_t));
    node->loc = *loc;
 
    if (current == SKIP_NO_SKIP) {
@@ -2296,27 +2327,31 @@ _glcpp_parser_skip_stack_pop(glcpp_parser_t *parser, YYLTYPE *loc)
 
    node = parser->skip_stack;
    parser->skip_stack = node->next;
-   ralloc_free (node);
 }
 
 static void
 _glcpp_parser_handle_version_declaration(glcpp_parser_t *parser, intmax_t version,
-                                         const char *es_identifier,
+                                         const char *identifier,
                                          bool explicitly_set)
 {
-   if (parser->version != 0)
+   if (parser->version_set)
       return;
 
    parser->version = version;
+   parser->version_set = true;
 
    add_builtin_define (parser, "__VERSION__", version);
 
    parser->is_gles = (version == 100) ||
-                     (es_identifier && (strcmp(es_identifier, "es") == 0));
+                     (identifier && (strcmp(identifier, "es") == 0));
+   bool is_compat = version >= 150 && identifier &&
+                    strcmp(identifier, "compatibility") == 0;
 
    /* Add pre-defined macros. */
    if (parser->is_gles)
       add_builtin_define(parser, "GL_ES", 1);
+   else if (is_compat)
+      add_builtin_define(parser, "GL_compatibility_profile", 1);
    else if (version >= 150)
       add_builtin_define(parser, "GL_core_profile", 1);
 
@@ -2333,11 +2368,26 @@ _glcpp_parser_handle_version_declaration(glcpp_parser_t *parser, intmax_t versio
       parser->extensions(parser->state, add_builtin_define, parser,
                          version, parser->is_gles);
 
+   if (parser->extension_list) {
+      /* If MESA_shader_integer_functions is supported, then the building
+       * blocks required for the 64x64 => 64 multiply exist.  Add defines for
+       * those functions so that they can be tested.
+       */
+      if (parser->extension_list->MESA_shader_integer_functions) {
+         add_builtin_define(parser, "__have_builtin_builtin_sign64", 1);
+         add_builtin_define(parser, "__have_builtin_builtin_umul64", 1);
+         add_builtin_define(parser, "__have_builtin_builtin_udiv64", 1);
+         add_builtin_define(parser, "__have_builtin_builtin_umod64", 1);
+         add_builtin_define(parser, "__have_builtin_builtin_idiv64", 1);
+         add_builtin_define(parser, "__have_builtin_builtin_imod64", 1);
+      }
+   }
+
    if (explicitly_set) {
-      ralloc_asprintf_rewrite_tail(&parser->output, &parser->output_length,
-                                   "#version %" PRIiMAX "%s%s", version,
-                                   es_identifier ? " " : "",
-                                   es_identifier ? es_identifier : "");
+      _mesa_string_buffer_printf(parser->output,
+                                 "#version %" PRIiMAX "%s%s", version,
+                                 identifier ? " " : "",
+                                 identifier ? identifier : "");
    }
 }
 

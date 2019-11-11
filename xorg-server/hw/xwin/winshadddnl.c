@@ -589,7 +589,7 @@ winShadowUpdateDDNL(ScreenPtr pScreen, shadowBufPtr pBuf)
 {
     winScreenPriv(pScreen);
     winScreenInfo *pScreenInfo = pScreenPriv->pScreenInfo;
-    RegionPtr damage = shadowDamage(pBuf);
+    RegionPtr damage = DamageRegion(pBuf->pDamage);
     RECT rcDest, rcSrc;
     POINT ptOrigin;
     DWORD dwBox = RegionNumRects(damage);
@@ -704,7 +704,7 @@ winCloseScreenShadowDDNL(ScreenPtr pScreen)
 {
     winScreenPriv(pScreen);
     winScreenInfo *pScreenInfo = pScreenPriv->pScreenInfo;
-    Bool fReturn=FALSE;
+    Bool fReturn = TRUE;
 
     winDebug("winCloseScreenShadowDDNL - Freeing screen resources\n");
 
@@ -741,10 +741,8 @@ winCloseScreenShadowDDNL(ScreenPtr pScreen)
         pScreenPriv->hwndScreen = NULL;
     }
 
-#if defined(XWIN_CLIPBOARD) || defined(XWIN_MULTIWINDOW)
     /* Destroy the thread startup mutex */
     if (pScreenPriv->pmServerStarted) pthread_mutex_destroy (&pScreenPriv->pmServerStarted);
-#endif
 
     /* Kill our screeninfo's pointer to the screen */
     pScreenInfo->pScreen = NULL;
@@ -1037,7 +1035,7 @@ winInstallColormapShadowDDNL(ColormapPtr pColormap)
     /* Install the DirectDraw palette on the primary surface */
     ddrval = IDirectDrawSurface4_SetPalette(pScreenPriv->pddsPrimary4,
                                             pCmapPriv->lpDDPalette);
-    if (FAILED(ddrval)) {
+    if (FAILED(ddrval) && ddrval != DDERR_SURFACELOST) {
         ErrorF("winInstallColormapShadowDDNL - Failed installing the "
                "DirectDraw palette.\n");
         return FALSE;
@@ -1190,6 +1188,7 @@ winSetEngineFunctionsShadowDDNL(ScreenPtr pScreen)
         pScreenPriv->pwinCreateBoundingWindow = winCreateBoundingWindowWindowed;
     pScreenPriv->pwinFinishScreenInit = winFinishScreenInitFB;
     pScreenPriv->pwinBltExposedRegions = winBltExposedRegionsShadowDDNL;
+    pScreenPriv->pwinBltExposedWindowRegion = NULL;
     pScreenPriv->pwinActivateApp = winActivateAppShadowDDNL;
     pScreenPriv->pwinRedrawScreen = winRedrawScreenShadowDDNL;
     pScreenPriv->pwinRealizeInstalledPalette

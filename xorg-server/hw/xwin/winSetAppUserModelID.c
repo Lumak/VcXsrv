@@ -44,6 +44,23 @@
 static HMODULE g_hmodShell32Dll = NULL;
 static SHGETPROPERTYSTOREFORWINDOWPROC g_pSHGetPropertyStoreForWindow = NULL;
 
+extern void winPropertyStoreInit(void);
+
+extern void winPropertyStoreDestroy(void);
+
+static const char * 
+RemoveWhitespaceAndTruncate(HWND hWnd, const char *AppID)
+{
+    const char *p=AppID;
+    static char appID[129];
+
+    while (*p && isspace(*p))
+        p++;
+    strncpy(appID, p, 128);
+    appID[128]=0;
+    return appID;
+}
+
 void
 winPropertyStoreInit(void)
 {
@@ -91,15 +108,15 @@ winSetAppUserModelID(HWND hWnd, const char *AppID)
         return;
     }
 
-    winDebug("winSetAppUserMOdelID - hwnd 0x%p appid '%s'\n", hWnd, AppID);
-
     hr = g_pSHGetPropertyStoreForWindow(hWnd, &IID_IPropertyStore,
                                         (void **) &pps);
     if (SUCCEEDED(hr) && pps) {
         PropVariantInit(&pv);
         if (AppID) {
+            const char *appID=RemoveWhitespaceAndTruncate(hWnd, AppID);
+            winDebug("winSetAppUserMOdelID - hwnd 0x%p appid '%s'\n", hWnd, appID);
             pv.vt = VT_LPWSTR;
-            hr = SHStrDupA(AppID, &pv.pwszVal);
+            hr = SHStrDupA(appID, &pv.pwszVal);
         }
 
         if (SUCCEEDED(hr)) {

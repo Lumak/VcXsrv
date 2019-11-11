@@ -27,24 +27,11 @@
 #define _GLAPI_PRIV_H
 
 
-#ifdef HAVE_DIX_CONFIG_H
-#include <dix-config.h>
-#include "glapi/mesa.h"
-#else /* HAVE_DIX_CONFIG_H */
 #define GL_GLEXT_PROTOTYPES
 #include "GL/gl.h"
 #include "GL/glext.h"
 
-#ifndef GL_OES_fixed_point
-typedef int GLfixed;
-#endif
 typedef int GLclampx;
-
-#ifndef GL_OES_EGL_image
-typedef void *GLeglImageOES;
-#endif
-
-#endif /* HAVE_DIX_CONFIG_H */
 
 #include "glapi/glapi.h"
 
@@ -52,16 +39,6 @@ typedef void *GLeglImageOES;
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-/* getproc */
-
-extern void
-_glapi_check_table_not_null(const struct _glapi_table *table);
-
-
-extern void
-_glapi_check_table(const struct _glapi_table *table);
-
 
 /* entrypoint */
 

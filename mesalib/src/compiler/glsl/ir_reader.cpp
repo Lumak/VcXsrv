@@ -490,7 +490,7 @@ ir_reader::read_if(s_expression *expr, ir_loop *loop_ctx)
    read_instructions(&iff->then_instructions, s_then, loop_ctx);
    read_instructions(&iff->else_instructions, s_else, loop_ctx);
    if (state->error) {
-      delete iff;
+      ir_if::operator delete(iff, mem_ctx);
       iff = NULL;
    }
    return iff;
@@ -512,7 +512,7 @@ ir_reader::read_loop(s_expression *expr)
 
    read_instructions(&loop->body_instructions, s_body, loop);
    if (state->error) {
-      delete loop;
+     ir_loop::operator delete(loop, mem_ctx);
       loop = NULL;
    }
    return loop;
@@ -833,7 +833,7 @@ ir_reader::read_constant(s_expression *expr)
 	 return NULL;
       }
 
-      if (type->base_type == GLSL_TYPE_FLOAT) {
+      if (type->is_float()) {
 	 s_number *value = SX_AS_NUMBER(expr);
 	 if (value == NULL) {
 	    ir_read_error(values, "expected numbers");
@@ -1047,11 +1047,11 @@ ir_reader::read_texture(s_expression *expr)
       }
 
       if (s_shadow->subexpressions.is_empty()) {
-	 tex->shadow_comparitor = NULL;
+	 tex->shadow_comparator = NULL;
       } else {
-	 tex->shadow_comparitor = read_rvalue(s_shadow);
-	 if (tex->shadow_comparitor == NULL) {
-	    ir_read_error(NULL, "when reading shadow comparitor in (%s ..)",
+	 tex->shadow_comparator = read_rvalue(s_shadow);
+	 if (tex->shadow_comparator == NULL) {
+	    ir_read_error(NULL, "when reading shadow comparator in (%s ..)",
 			  tex->opcode_string());
 	    return NULL;
 	 }

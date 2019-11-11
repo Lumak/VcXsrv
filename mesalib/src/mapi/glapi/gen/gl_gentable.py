@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 
 # (C) Copyright IBM Corporation 2004, 2005
 # (C) Copyright Apple Inc. 2011
@@ -30,6 +29,8 @@
 # Based on code ogiginally by:
 #    Ian Romanick <idr@us.ibm.com>
 
+from __future__ import print_function
+
 import argparse
 
 import license
@@ -57,6 +58,7 @@ header = """/* GLXEXT is the define used in the xserver when the GLX extension i
 #endif
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "glheader.h"
 
@@ -145,6 +147,19 @@ _glapi_create_table_from_handle(void *handle, const char *symbol_prefix) {
 
     return disp;
 }
+
+void
+ _glapi_table_patch(struct _glapi_table *table, const char *name, void *wrapper)
+{
+   for (int func_index = 0; func_index < GLAPI_TABLE_COUNT; ++func_index) {
+      if (!strcmp(_glapi_table_func_names[func_index], name)) {
+            ((void **)table)[func_index] = wrapper;
+            return;
+         }
+   }
+   fprintf(stderr, "could not patch %s in dispatch table\\n", name);
+}
+
 """
 
 
@@ -174,12 +189,12 @@ class PrintCode(gl_XML.gl_print_base):
 
 
     def printRealHeader(self):
-        print header
+        print(header)
         return
 
 
     def printRealFooter(self):
-        print footer
+        print(footer)
         return
 
 
@@ -187,13 +202,13 @@ class PrintCode(gl_XML.gl_print_base):
 
         # Determine how many functions have a defined offset.
         func_count = 0
-        for f in api.functions_by_name.itervalues():
+        for f in api.functions_by_name.values():
             if f.offset != -1:
                 func_count += 1
 
         # Build the mapping from offset to function name.
         funcnames = [None] * func_count
-        for f in api.functions_by_name.itervalues():
+        for f in api.functions_by_name.values():
             if f.offset != -1:
                 if not (funcnames[f.offset] is None):
                     raise Exception("Function table has more than one function with same offset (offset %d, func %s)" % (f.offset, f.name))
@@ -201,15 +216,15 @@ class PrintCode(gl_XML.gl_print_base):
 
         # Check that the table has no gaps.  We expect a function at every offset,
         # and the code which generates the table relies on this.
-        for i in xrange(0, func_count):
+        for i in range(0, func_count):
             if funcnames[i] is None:
                 raise Exception("Function table has no function at offset %d" % (i))
 
-        print "#define GLAPI_TABLE_COUNT %d" % func_count
-        print "static const char * const _glapi_table_func_names[GLAPI_TABLE_COUNT] = {"
-        for i in xrange(0, func_count):
-            print "    /* %5d */ \"%s\"," % (i, funcnames[i])
-        print "};"
+        print("#define GLAPI_TABLE_COUNT %d" % func_count)
+        print("static const char * const _glapi_table_func_names[GLAPI_TABLE_COUNT] = {")
+        for i in range(0, func_count):
+            print("    /* %5d */ \"%s\"," % (i, funcnames[i]))
+        print("};")
 
         return
 

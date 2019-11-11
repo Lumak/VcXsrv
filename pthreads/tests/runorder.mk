@@ -7,11 +7,12 @@ benchtest3.bench:
 benchtest4.bench:
 benchtest5.bench:
 
-affinity1.pass: 
+affinity1.pass: errno0.pass
 affinity2.pass: affinity1.pass
 affinity3.pass: affinity2.pass self1.pass create3.pass
-affinity4.pass: affinity3.pass self1.pass create3.pass
-affinity5.pass: affinity4.pass self1.pass create3.pass
+affinity4.pass: affinity3.pass
+affinity5.pass: affinity4.pass
+affinity6.pass: affinity5.pass
 barrier1.pass: semaphore4.pass
 barrier2.pass: barrier1.pass semaphore4.pass
 barrier3.pass: barrier2.pass semaphore4.pass self1.pass create3.pass join4.pass
@@ -55,7 +56,9 @@ create3.pass: create2.pass
 delay1.pass: self1.pass create3.pass
 delay2.pass: delay1.pass
 detach1.pass: join0.pass
-equal1.pass: self1.pass create1.pass
+equal0.pass: self1.pass
+equal1.pass: equal0.pass create1.pass
+errno0.pass: sizes.pass
 errno1.pass: mutex3.pass
 exception1.pass: cancel4.pass
 exception2.pass: exception1.pass
@@ -66,6 +69,7 @@ exit2.pass: create1.pass
 exit3.pass: create1.pass
 exit4.pass: self1.pass create3.pass 
 exit5.pass: exit4.pass kill1.pass
+exit6.pass: exit5.pass
 eyal1.pass: self1.pass create3.pass mutex8.pass tsd1.pass
 inherit1.pass: join1.pass priority1.pass
 join0.pass: create1.pass
@@ -101,12 +105,15 @@ mutex8.pass: mutex7.pass
 mutex8n.pass: mutex7n.pass
 mutex8e.pass: mutex7e.pass
 mutex8r.pass: mutex7r.pass
+name_np1.pass: join4.pass barrier6.pass
+name_np2.pass: name_np1.pass
 once1.pass: create1.pass
 once2.pass: once1.pass
 once3.pass: once2.pass
 once4.pass: once3.pass
 priority1.pass: join1.pass
 priority2.pass: priority1.pass barrier3.pass
+reinit1.pass: rwlock7.pass
 reuse1.pass: create3.pass
 reuse2.pass: reuse1.pass
 robust1.pass: mutex8r.pass
@@ -143,7 +150,10 @@ spin2.pass: spin1.pass
 spin3.pass: spin2.pass
 spin4.pass: spin3.pass
 stress1.pass: create3.pass mutex8.pass barrier6.pass
+threestage.pass: stress1.pass
+timeouts.pass: condvar9.pass
 tsd1.pass: barrier5.pass join1.pass
 tsd2.pass: tsd1.pass
+tsd3.pass: tsd2.pass
 valid1.pass: join1.pass
 valid2.pass: valid1.pass

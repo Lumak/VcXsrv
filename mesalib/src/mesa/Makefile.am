@@ -21,6 +21,11 @@
 
 SUBDIRS = . main/tests
 
+# state tracker tests depend on libmesagallium.la
+if HAVE_GALLIUM
+SUBDIRS += state_tracker/tests
+endif
+
 if HAVE_XLIB_GLX
 SUBDIRS += drivers/x11
 endif
@@ -33,15 +38,14 @@ if HAVE_OSMESA
 SUBDIRS += drivers/osmesa
 endif
 
-if HAVE_GLX
-gldir = $(includedir)/GL
-gl_HEADERS = $(top_srcdir)/include/GL/*.h
-endif
-
 include Makefile.sources
 
 EXTRA_DIST = \
 	drivers/SConscript \
+	main/meson.build \
+	program/meson.build \
+	meson.build \
+	main/format_fallback.py \
 	main/format_info.py \
 	main/format_pack.py \
 	main/format_parser.py \
@@ -59,6 +63,7 @@ EXTRA_DIST = \
 
 BUILT_SOURCES = \
 	main/get_hash.h \
+	main/format_fallback.c \
 	main/format_info.h \
 	main/format_pack.c \
 	main/format_unpack.c \
@@ -68,12 +73,17 @@ CLEANFILES = \
 	$(BUILT_SOURCES) \
 	program/program_parse.tab.h
 
-PYTHON_GEN = $(AM_V_GEN)$(PYTHON2) $(PYTHON_FLAGS)
+PYTHON_GEN = $(AM_V_GEN)$(PYTHON) $(PYTHON_FLAGS)
 
 main/get_hash.h: ../mapi/glapi/gen/gl_and_es_API.xml main/get_hash_params.py \
                  main/get_hash_generator.py
 	$(PYTHON_GEN) $(srcdir)/main/get_hash_generator.py \
 		-f $(srcdir)/../mapi/glapi/gen/gl_and_es_API.xml > $@
+
+main/format_fallback.c: main/format_fallback.py \
+                        main/format_parser.py \
+	                main/formats.csv
+	$(PYTHON_GEN) $(srcdir)/main/format_fallback.py $(srcdir)/main/formats.csv $@
 
 main/format_info.h: main/formats.csv \
                     main/format_parser.py main/format_info.py
@@ -101,6 +111,7 @@ endif
 
 AM_CPPFLAGS = $(DEFINES) $(INCLUDE_DIRS)
 AM_CFLAGS = \
+	$(VDPAU_CFLAGS) \
 	$(LLVM_CFLAGS) \
 	$(VISIBILITY_CFLAGS) \
 	$(MSVC2013_COMPAT_CFLAGS)
@@ -160,11 +171,6 @@ libmesa_sse41_la_SOURCES = \
 	$(X86_SSE41_FILES)
 
 libmesa_sse41_la_CFLAGS = $(AM_CFLAGS) $(SSE41_CFLAGS)
-
-if HAVE_GLX
-pkgconfigdir = $(libdir)/pkgconfig
-pkgconfig_DATA = gl.pc
-endif
 
 MKDIR_GEN = $(AM_V_at)$(MKDIR_P) $(@D)
 YACC_GEN = $(AM_V_GEN)$(YACC) $(YFLAGS)

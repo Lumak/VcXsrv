@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 
 # (C) Copyright IBM Corporation 2005
 # All Rights Reserved.
@@ -149,8 +148,8 @@ class PrintGlxDispatchFunctions(glX_proto_common.glx_print_proto):
 
         print '{'
 
-        if not f.is_abi():
-            print '    %s %s = __glGetProcAddress("gl%s");' % (self.fptrType(name), name, name)
+#        if not f.is_abi():
+#            print '    %s %s = __glGetProcAddress("gl%s");' % (self.fptrType(name), name, name)
 
         if f.glx_rop or f.vectorequiv:
             self.printRenderFunction(f)

@@ -39,6 +39,7 @@
 #include <GL/glxtokens.h>
 #include <GL/internal/dri_interface.h>
 #include <os.h>
+#include "extinit.h"
 #include "glxserver.h"
 #include "glxext.h"
 #include "glxcontext.h"
@@ -49,33 +50,7 @@
 #define dlerror() "Getting loadlibrary error string not implemented"
 #endif
 
-static int
-getUST(int64_t * ust)
-{
-    struct timeval tv;
 
-    if (ust == NULL)
-        return -EFAULT;
-
-#ifdef _MSC_VER
-    DebugBreak();
-    return -EFAULT;
-#else
-    if (gettimeofday(&tv, NULL) == 0) {
-        ust[0] = (tv.tv_sec * 1000000) + tv.tv_usec;
-        return 0;
-    }
-    else {
-        return -errno;
-    }
-#endif
-}
-
-const __DRIsystemTimeExtension systemTimeExtension = {
-    {__DRI_SYSTEM_TIME, 1},
-    getUST,
-    NULL,
-};
 
 #define __ATTRIB(attrib, field) \
     { attrib, offsetof(__GLXconfig, field) }
@@ -152,12 +127,14 @@ render_type_is_pbuffer_only(unsigned renderType)
 static __GLXconfig *
 createModeFromConfig(const __DRIcoreExtension * core,
                      const __DRIconfig * driConfig,
-                     unsigned int visualType)
+                     unsigned int visualType,
+                     GLboolean duplicateForComp)
 {
     __GLXDRIconfig *config;
     GLint renderType = 0;
     unsigned int attrib, value, drawableType = GLX_PBUFFER_BIT;
     int i;
+
 
     config = calloc(1, sizeof *config);
 
@@ -194,6 +171,13 @@ createModeFromConfig(const __DRIcoreExtension * core,
                 config->config.bindToTextureTargets |=
                     GLX_TEXTURE_RECTANGLE_BIT_EXT;
             break;
+        case __DRI_ATTRIB_SWAP_METHOD:
+            /* Workaround for broken dri drivers */
+            if (value != GLX_SWAP_UNDEFINED_OML &&
+                value != GLX_SWAP_COPY_OML &&
+                value != GLX_SWAP_EXCHANGE_OML)
+                value = GLX_SWAP_UNDEFINED_OML;
+            /* Fall through. */
         default:
             setScalar(&config->config, attrib, value);
             break;
@@ -209,6 +193,33 @@ createModeFromConfig(const __DRIcoreExtension * core,
     config->config.drawableType = drawableType;
     config->config.yInverted = GL_TRUE;
 
+#ifdef COMPOSITE
+    if (!noCompositeExtension) {
+        /*
+        * Here we decide what fbconfigs will be duplicated for compositing.
+        * fgbconfigs marked with duplicatedForConf will be reserved for
+        * compositing visuals.
+        * It might look strange to do this decision this late when translation
+        * from a __DRIConfig is already done, but using the __DRIConfig
+        * accessor function becomes worse both with respect to code complexity
+        * and CPU usage.
+        */
+        if (duplicateForComp &&
+            (render_type_is_pbuffer_only(renderType) ||
+            config->config.rgbBits != 32 ||
+            config->config.redBits != 8 ||
+            config->config.greenBits != 8 ||
+            config->config.blueBits != 8 ||
+            config->config.visualRating != GLX_NONE ||
+            config->config.sampleBuffers != 0)) {
+            free(config);
+            return NULL;
+        }
+
+        config->config.duplicatedForComp = duplicateForComp;
+    }
+#endif
+
     return &config->config;
 }
 
@@ -223,20 +234,35 @@ glxConvertConfigs(const __DRIcoreExtension * core,
     head.next = NULL;
 
     for (i = 0; configs[i]; i++) {
-        tail->next = createModeFromConfig(core, configs[i], GLX_TRUE_COLOR);
+        tail->next = createModeFromConfig(core, configs[i], GLX_TRUE_COLOR,
+                                          GL_FALSE);
         if (tail->next == NULL)
             break;
-
         tail = tail->next;
     }
 
     for (i = 0; configs[i]; i++) {
-        tail->next = createModeFromConfig(core, configs[i], GLX_DIRECT_COLOR);
+        tail->next = createModeFromConfig(core, configs[i], GLX_DIRECT_COLOR,
+                                          GL_FALSE);
         if (tail->next == NULL)
             break;
 
         tail = tail->next;
     }
+
+#ifdef COMPOSITE
+    if (!noCompositeExtension) {
+        /* Duplicate fbconfigs for use with compositing visuals */
+        for (i = 0; configs[i]; i++) {
+            tail->next = createModeFromConfig(core, configs[i], GLX_TRUE_COLOR,
+                                            GL_TRUE);
+            if (tail->next == NULL)
+                continue;
+
+            tail = tail->next;
+        }
+    }
+#endif
 
     return head.next;
 }
@@ -261,22 +287,52 @@ glxProbeDriver(const char *driverName,
     char filename[PATH_MAX];
     char *get_extensions_name;
     const __DRIextension **extensions = NULL;
+    const char *path = NULL;
+
+    /* Search in LIBGL_DRIVERS_PATH if we're not setuid. */
+    if (!PrivsElevated())
+        path = getenv("LIBGL_DRIVERS_PATH");
+
+    if (!path)
+        path = dri_driver_path;
+
+    do {
+        const char *next;
+        int path_len;
+
+        next = strchr(path, ':');
+        if (next) {
+            path_len = next - path;
+            next++;
+        } else {
+            path_len = strlen(path);
+            next = NULL;
+        }
 
 #ifdef _MSC_VER
-#define DLLNAME "%s%s_dri.dll"
-    snprintf(filename, sizeof filename, DLLNAME,
-             dri_driver_path, driverName);
+#define DLLNAME "%.*s%s_dri.dll"
+        snprintf(filename, sizeof filename, DLLNAME, path_len, path,
+                 driverName);
 
-    driver = LoadLibrary(filename);
+        driver = LoadLibrary(filename);
 #else
-    snprintf(filename, sizeof filename, "%s/%s_dri.so",
-             dri_driver_path, driverName);
+        snprintf(filename, sizeof filename, "%.*s/%s_dri.so", path_len, path,
+                 driverName);
 
-    driver = dlopen(filename, RTLD_LAZY | RTLD_LOCAL);
+        driver = dlopen(filename, RTLD_LAZY | RTLD_LOCAL);
 #endif
-    if (driver == NULL) {
+        if (driver != NULL)
+            break;
+
         LogMessage(X_ERROR, "AIGLX error: dlopen of %s failed (%s)\n",
                    filename, dlerror());
+
+        path = next;
+    } while (path);
+
+    if (driver == NULL) {
+        LogMessage(X_ERROR, "AIGLX error: unable to load driver %s\n",
+                  driverName);
         goto cleanup_failure;
     }
 

@@ -91,6 +91,13 @@ enum radeon_family {
     CHIP_STONEY,
     CHIP_POLARIS10,
     CHIP_POLARIS11,
+    CHIP_POLARIS12,
+    CHIP_VEGAM,
+    CHIP_VEGA10,
+    CHIP_VEGA12,
+    CHIP_VEGA20,
+    CHIP_RAVEN,
+    CHIP_RAVEN2,
     CHIP_LAST,
 };
 
@@ -103,9 +110,10 @@ enum chip_class {
     R700,
     EVERGREEN,
     CAYMAN,
-    SI,
-    CIK,
-    VI,
+    SI,  /* GFX6 */
+    CIK, /* GFX7 */
+    VI,  /* GFX8 */
+    GFX9,
 };
 
 #endif

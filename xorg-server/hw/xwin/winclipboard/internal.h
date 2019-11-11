@@ -65,10 +65,11 @@ typedef int pid_t;
 #define WIN_XEVENTS_FAILED			1
 #define WIN_XEVENTS_NOTIFY_DATA			3
 #define WIN_XEVENTS_NOTIFY_TARGETS		4
-#define WIN_LOCAL_PROPERTY			"CYGX_CUT_BUFFER"
 
 #define WM_WM_REINIT                           (WM_USER + 200)
 #define WM_WM_QUIT                             (WM_USER + 201)
+
+#define ARRAY_SIZE(a)  (sizeof((a)) / sizeof((a)[0]))
 
 /*
  * References to external symbols
@@ -104,6 +105,7 @@ typedef struct
     Atom atomUTF8String;
     Atom atomCompoundText;
     Atom atomTargets;
+    Atom atomIncr;
 } ClipboardAtoms;
 
 /* Modern clipboard API functions */
@@ -138,6 +140,8 @@ typedef struct
 {
   Bool fUseUnicode;
   Atom *targetList;
+  unsigned char *incr;
+  unsigned long int incrsize;
 } ClipboardConversionData;
 
 int

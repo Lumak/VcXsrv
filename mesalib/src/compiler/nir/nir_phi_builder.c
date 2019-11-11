@@ -81,7 +81,7 @@ struct nir_phi_builder_value {
 struct nir_phi_builder *
 nir_phi_builder_create(nir_function_impl *impl)
 {
-   struct nir_phi_builder *pb = ralloc(NULL, struct nir_phi_builder);
+   struct nir_phi_builder *pb = rzalloc(NULL, struct nir_phi_builder);
 
    pb->shader = impl->function->shader;
    pb->impl = impl;
@@ -129,7 +129,6 @@ nir_phi_builder_add_value(struct nir_phi_builder *pb, unsigned num_components,
 
    while (w_start != w_end) {
       nir_block *cur = pb->W[w_start++];
-      struct set_entry *dom_entry;
       set_foreach(cur->dom_frontier, dom_entry) {
          nir_block *next = (nir_block *) dom_entry->key;
 
@@ -216,7 +215,7 @@ nir_phi_builder_value_get_block_def(struct nir_phi_builder_value *val,
                         val->bit_size, NULL);
       phi->instr.block = dom;
       exec_list_push_tail(&val->phis, &phi->instr.node);
-      def = &phi->dest.ssa;
+      def = val->defs[dom->index] = &phi->dest.ssa;
    } else {
       /* In this case, we have an actual SSA def.  It's either the result of a
        * phi node created by the case above or one passed to us through
@@ -241,8 +240,8 @@ nir_phi_builder_value_get_block_def(struct nir_phi_builder_value *val,
 static int
 compare_blocks(const void *_a, const void *_b)
 {
-   nir_block * const * a = _a;
-   nir_block * const * b = _b;
+   const nir_block * const * a = _a;
+   const nir_block * const * b = _b;
 
    return (*a)->index - (*b)->index;
 }
@@ -276,7 +275,6 @@ nir_phi_builder_finish(struct nir_phi_builder *pb)
           * XXX: Calling qsort this many times seems expensive.
           */
          int num_preds = 0;
-         struct set_entry *entry;
          set_foreach(phi->instr.block->predecessors, entry)
             preds[num_preds++] = (nir_block *)entry->key;
          qsort(preds, num_preds, sizeof(*preds), compare_blocks);

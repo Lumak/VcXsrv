@@ -99,41 +99,57 @@ is_swizzleless_move(nir_alu_instr *instr)
 }
 
 static bool
-copy_prop_src(nir_src *src, nir_instr *parent_instr, nir_if *parent_if)
+is_trivial_deref_cast(nir_deref_instr *cast)
+{
+   if (cast->deref_type != nir_deref_type_cast)
+      return false;
+
+   nir_deref_instr *parent = nir_src_as_deref(cast->parent);
+   if (!parent)
+      return false;
+
+   return cast->mode == parent->mode &&
+          cast->type == parent->type &&
+          cast->dest.ssa.num_components == parent->dest.ssa.num_components &&
+          cast->dest.ssa.bit_size == parent->dest.ssa.bit_size;
+}
+
+static bool
+copy_prop_src(nir_src *src, nir_instr *parent_instr, nir_if *parent_if,
+              unsigned num_components)
 {
    if (!src->is_ssa) {
       if (src->reg.indirect)
-         return copy_prop_src(src->reg.indirect, parent_instr, parent_if);
+         return copy_prop_src(src->reg.indirect, parent_instr, parent_if, 1);
       return false;
    }
 
    nir_instr *src_instr = src->ssa->parent_instr;
-   if (src_instr->type != nir_instr_type_alu)
-      return false;
-
-   nir_alu_instr *alu_instr = nir_instr_as_alu(src_instr);
-   if (!is_swizzleless_move(alu_instr))
-      return false;
-
-   /* Don't let copy propagation land us with a phi that has more
-    * components in its source than it has in its destination.  That badly
-    * messes up out-of-ssa.
-    */
-   if (parent_instr && parent_instr->type == nir_instr_type_phi) {
-      nir_phi_instr *phi = nir_instr_as_phi(parent_instr);
-      assert(phi->dest.is_ssa);
-      if (phi->dest.ssa.num_components !=
-          alu_instr->src[0].src.ssa->num_components)
+   nir_ssa_def *copy_def;
+   if (src_instr->type == nir_instr_type_alu) {
+      nir_alu_instr *alu_instr = nir_instr_as_alu(src_instr);
+      if (!is_swizzleless_move(alu_instr))
          return false;
+
+      if (alu_instr->src[0].src.ssa->num_components != num_components)
+         return false;
+
+      copy_def= alu_instr->src[0].src.ssa;
+   } else if (src_instr->type == nir_instr_type_deref) {
+      nir_deref_instr *deref_instr = nir_instr_as_deref(src_instr);
+      if (!is_trivial_deref_cast(deref_instr))
+         return false;
+
+      copy_def = deref_instr->parent.ssa;
+   } else {
+      return false;
    }
 
    if (parent_instr) {
-      nir_instr_rewrite_src(parent_instr, src,
-                            nir_src_for_ssa(alu_instr->src[0].src.ssa));
+      nir_instr_rewrite_src(parent_instr, src, nir_src_for_ssa(copy_def));
    } else {
       assert(src == &parent_if->condition);
-      nir_if_rewrite_condition(parent_if,
-                               nir_src_for_ssa(alu_instr->src[0].src.ssa));
+      nir_if_rewrite_condition(parent_if, nir_src_for_ssa(copy_def));
    }
 
    return true;
@@ -146,7 +162,7 @@ copy_prop_alu_src(nir_alu_instr *parent_alu_instr, unsigned index)
    if (!src->src.is_ssa) {
       if (src->src.reg.indirect)
          return copy_prop_src(src->src.reg.indirect, &parent_alu_instr->instr,
-                              NULL);
+                              NULL, 1);
       return false;
    }
 
@@ -193,51 +209,104 @@ copy_prop_alu_src(nir_alu_instr *parent_alu_instr, unsigned index)
    return true;
 }
 
-typedef struct {
-   nir_instr *parent_instr;
-   bool progress;
-} copy_prop_state;
-
 static bool
-copy_prop_src_cb(nir_src *src, void *_state)
+copy_prop_dest(nir_dest *dest, nir_instr *instr)
 {
-   copy_prop_state *state = (copy_prop_state *) _state;
-   while (copy_prop_src(src, state->parent_instr, NULL))
-      state->progress = true;
+   if (!dest->is_ssa && dest->reg.indirect)
+      return copy_prop_src(dest->reg.indirect, instr, NULL, 1);
 
-   return true;
+   return false;
 }
 
 static bool
 copy_prop_instr(nir_instr *instr)
 {
-   if (instr->type == nir_instr_type_alu) {
+   bool progress = false;
+   switch (instr->type) {
+   case nir_instr_type_alu: {
       nir_alu_instr *alu_instr = nir_instr_as_alu(instr);
-      bool progress = false;
 
       for (unsigned i = 0; i < nir_op_infos[alu_instr->op].num_inputs; i++)
          while (copy_prop_alu_src(alu_instr, i))
             progress = true;
 
-      if (!alu_instr->dest.dest.is_ssa && alu_instr->dest.dest.reg.indirect)
-         while (copy_prop_src(alu_instr->dest.dest.reg.indirect, instr, NULL))
-            progress = true;
+      while (copy_prop_dest(&alu_instr->dest.dest, instr))
+         progress = true;
 
       return progress;
    }
 
-   copy_prop_state state;
-   state.parent_instr = instr;
-   state.progress = false;
-   nir_foreach_src(instr, copy_prop_src_cb, &state);
+   case nir_instr_type_deref: {
+      nir_deref_instr *deref = nir_instr_as_deref(instr);
 
-   return state.progress;
+      if (deref->deref_type != nir_deref_type_var) {
+         assert(deref->dest.is_ssa);
+         const unsigned comps = deref->dest.ssa.num_components;
+         while (copy_prop_src(&deref->parent, instr, NULL, comps))
+            progress = true;
+      }
+
+      if (deref->deref_type == nir_deref_type_array) {
+         while (copy_prop_src(&deref->arr.index, instr, NULL, 1))
+            progress = true;
+      }
+
+      return progress;
+   }
+
+   case nir_instr_type_tex: {
+      nir_tex_instr *tex = nir_instr_as_tex(instr);
+      for (unsigned i = 0; i < tex->num_srcs; i++) {
+         unsigned num_components = nir_tex_instr_src_size(tex, i);
+         while (copy_prop_src(&tex->src[i].src, instr, NULL, num_components))
+            progress = true;
+      }
+
+      while (copy_prop_dest(&tex->dest, instr))
+         progress = true;
+
+      return progress;
+   }
+
+   case nir_instr_type_intrinsic: {
+      nir_intrinsic_instr *intrin = nir_instr_as_intrinsic(instr);
+      for (unsigned i = 0;
+           i < nir_intrinsic_infos[intrin->intrinsic].num_srcs; i++) {
+         unsigned num_components = nir_intrinsic_src_components(intrin, i);
+
+         while (copy_prop_src(&intrin->src[i], instr, NULL, num_components))
+            progress = true;
+      }
+
+      if (nir_intrinsic_infos[intrin->intrinsic].has_dest) {
+         while (copy_prop_dest(&intrin->dest, instr))
+            progress = true;
+      }
+
+      return progress;
+   }
+
+   case nir_instr_type_phi: {
+      nir_phi_instr *phi = nir_instr_as_phi(instr);
+      assert(phi->dest.is_ssa);
+      unsigned num_components = phi->dest.ssa.num_components;
+      nir_foreach_phi_src(src, phi) {
+         while (copy_prop_src(&src->src, instr, NULL, num_components))
+            progress = true;
+      }
+
+      return progress;
+   }
+
+   default:
+      return false;
+   }
 }
 
 static bool
 copy_prop_if(nir_if *if_stmt)
 {
-   return copy_prop_src(&if_stmt->condition, NULL, if_stmt);
+   return copy_prop_src(&if_stmt->condition, NULL, if_stmt, 1);
 }
 
 static bool

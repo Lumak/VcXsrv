@@ -131,7 +131,7 @@ ir_constant_variable_visitor::visit_enter(ir_assignment *ir)
        var->data.mode == ir_var_shader_shared)
       return visit_continue;
 
-   constval = ir->rhs->constant_expression_value();
+   constval = ir->rhs->constant_expression_value(ralloc_parent(ir));
    if (!constval)
       return visit_continue;
 
@@ -190,7 +190,6 @@ do_constant_variable(exec_list *instructions)
                                   _mesa_key_pointer_equal);
    v.run(instructions);
 
-   struct hash_entry *hte;
    hash_table_foreach(v.ht, hte) {
       struct assignment_entry *entry = (struct assignment_entry *) hte->data;
 

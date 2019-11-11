@@ -42,9 +42,7 @@
 #include "winmsg.h"
 #include "winmonitors.h"
 #include "inputstr.h"
-#ifdef XWIN_CLIPBOARD
 #include "winclipboard/winclipboard.h"
-#endif
 
 #ifndef XKB_IN_SERVER
 #define XKB_IN_SERVER
@@ -58,6 +56,88 @@
 extern Bool		g_fClipboardStarted;
 Bool g_fCursor = TRUE;
 Bool g_fButton[3] = { FALSE, FALSE, FALSE };
+
+
+wBOOL CALLBACK enumWindowsProc(HWND hwnd, LPARAM lParam)
+{
+  DWORD thisProcessId=(DWORD)lParam;
+  DWORD wndProcessId;
+
+  GetWindowThreadProcessId(hwnd, &wndProcessId);
+
+  if (thisProcessId!=wndProcessId)
+    return TRUE;
+
+  if (!IsWindowVisible(hwnd)) // Leave hidden windows hidden
+    return TRUE;
+
+  WINDOWPLACEMENT wp;
+  wp.length=sizeof(wp);
+  if (!GetWindowPlacement(hwnd, &wp))
+    return TRUE;
+
+  wp.showCmd=SW_RESTORE;
+  SetWindowPlacement(hwnd, &wp);
+
+  RECT rect;
+  if (!GetWindowRect(hwnd, &rect))
+    return TRUE;
+
+  HMONITOR hMonitor=MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+  MONITORINFO monitorInfo;
+  monitorInfo.cbSize=sizeof(monitorInfo);
+  if (!GetMonitorInfo(hMonitor, &monitorInfo))
+    return TRUE;
+
+  BOOL moveWin=FALSE;
+  if (rect.left<monitorInfo.rcWork.left)
+  {
+    moveWin=TRUE;
+    rect.right+=monitorInfo.rcWork.left-rect.left;
+    rect.left=monitorInfo.rcWork.left;
+  }
+  if (rect.top<monitorInfo.rcWork.top)
+  {
+    moveWin=TRUE;
+    rect.bottom+=monitorInfo.rcWork.top-rect.top;
+    rect.top=monitorInfo.rcWork.top;
+  }
+  if (rect.bottom>monitorInfo.rcWork.bottom)
+  {
+    moveWin=TRUE;
+    rect.top+=monitorInfo.rcWork.bottom-rect.bottom;
+    rect.bottom=monitorInfo.rcWork.bottom;
+  }
+  if (rect.right>monitorInfo.rcWork.right)
+  {
+    moveWin=TRUE;
+    rect.left+=monitorInfo.rcWork.right-rect.right;
+    rect.right=monitorInfo.rcWork.right;
+  }
+  if (rect.left<monitorInfo.rcWork.left)
+  {
+    moveWin=TRUE;
+    rect.left=monitorInfo.rcWork.left;
+  }
+  if (rect.top<monitorInfo.rcWork.top)
+  {
+    moveWin=TRUE;
+    rect.top=monitorInfo.rcWork.top;
+  }
+  if (moveWin)
+  {
+    SetWindowPos(hwnd, NULL, rect.left, rect.top, rect.right-rect.left, rect.bottom-rect.top,
+                 SWP_NOACTIVATE|SWP_NOOWNERZORDER|SWP_NOZORDER);
+  }
+
+  return TRUE;
+}
+
+static void gatherWindows(void)
+{
+  DWORD processId=GetCurrentProcessId();
+  EnumDesktopWindows(NULL, enumWindowsProc, (LPARAM)processId);
+}
 
 /*
  * Called by winWakeupHandler
@@ -231,11 +311,9 @@ winWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
                                                                     ||
                                                                     s_pScreenInfo->
                                                                     fRootless
-#ifdef XWIN_MULTIWINDOW
                                                                     ||
                                                                     s_pScreenInfo->
                                                                     fMultiWindow
-#endif
                 )) {
                 DWORD dwWidth = 0, dwHeight = 0;
 
@@ -273,8 +351,9 @@ winWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
                  */
 
                 /* Set screen size to match new size, if it is different to current */
-                if ((s_pScreenInfo->dwWidth != dwWidth) ||
-                    (s_pScreenInfo->dwHeight != dwHeight)) {
+                if (((dwWidth != 0) && (dwHeight != 0)) &&
+                    ((s_pScreenInfo->dwWidth != dwWidth) ||
+                     (s_pScreenInfo->dwHeight != dwHeight))) {
                     winDoRandRScreenSetSize(s_pScreen,
                                             dwWidth,
                                             dwHeight,
@@ -326,9 +405,7 @@ winWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
             || s_pScreenInfo->fMWExtWM
 #endif
             || s_pScreenInfo->fRootless
-#ifdef XWIN_MULTIWINDOW
             || s_pScreenInfo->fMultiWindow
-#endif
             || s_pScreenInfo->fFullScreen)
             break;
 
@@ -625,9 +702,7 @@ winWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
             || s_pScreenInfo->fMWExtWM
 #endif
             || s_pScreenInfo->fRootless
-#ifdef XWIN_MULTIWINDOW
             || s_pScreenInfo->fMultiWindow
-#endif
             )
             break;
 
@@ -710,6 +785,14 @@ winWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
     }
 
     case WM_MOUSEMOVE:
+        if (wParam & (MK_LBUTTON|MK_RBUTTON|MK_MBUTTON))
+        {
+            if (lParam==GetWindowLongPtr(hwnd, WND_IDX_BUTTONDOWNLPARAM))
+            {
+                return 0;  /* Ignore the mouse since the mouse was not moved wrt the button down click */
+            }
+            SetWindowLongPtr(hwnd, WND_IDX_BUTTONDOWNLPARAM,-1);
+        }
         /* We can't do anything without privates */
         if (s_pScreenPriv == NULL || s_pScreenInfo->fIgnoreInput)
             break;
@@ -797,6 +880,7 @@ winWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 
     case WM_LBUTTONDBLCLK:
     case WM_LBUTTONDOWN:
+        SetWindowLongPtr(hwnd, WND_IDX_BUTTONDOWNLPARAM,lParam);
         if (s_pScreenPriv == NULL || s_pScreenInfo->fIgnoreInput)
             break;
         if (s_pScreenInfo->fRootless
@@ -820,6 +904,7 @@ winWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 
     case WM_MBUTTONDBLCLK:
     case WM_MBUTTONDOWN:
+        SetWindowLongPtr(hwnd, WND_IDX_BUTTONDOWNLPARAM,lParam);
         if (s_pScreenPriv == NULL || s_pScreenInfo->fIgnoreInput)
             break;
         if (s_pScreenInfo->fRootless
@@ -843,6 +928,7 @@ winWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 
     case WM_RBUTTONDBLCLK:
     case WM_RBUTTONDOWN:
+        SetWindowLongPtr(hwnd, WND_IDX_BUTTONDOWNLPARAM,lParam);
         if (s_pScreenPriv == NULL || s_pScreenInfo->fIgnoreInput)
             break;
         if (s_pScreenInfo->fRootless
@@ -866,6 +952,7 @@ winWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 
     case WM_XBUTTONDBLCLK:
     case WM_XBUTTONDOWN:
+        SetWindowLongPtr(hwnd, WND_IDX_BUTTONDOWNLPARAM,lParam);
         if (s_pScreenPriv == NULL || s_pScreenInfo->fIgnoreInput)
             break;
         if (s_pScreenInfo->fRootless
@@ -1136,10 +1223,8 @@ winWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
             ShowCursor(TRUE);
         }
 
-#ifdef XWIN_CLIPBOARD
         /* Make sure the clipboard chain is ok. */
         winFixClipboardChain(0);
-#endif
 
         /* Call engine specific screen activation/deactivation function */
         (*s_pScreenPriv->pwinActivateApp) (s_pScreen);
@@ -1161,7 +1246,6 @@ winWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
             winDisplayExitDialog(s_pScreenPriv);
             return 0;
 
-#ifdef XWIN_MULTIWINDOW
         case ID_APP_HIDE_ROOT:
             if (s_pScreenPriv->fRootWindowShown)
                 ShowWindow(s_pScreenPriv->hwndScreen, SW_HIDE);
@@ -1169,13 +1253,14 @@ winWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
                 ShowWindow(s_pScreenPriv->hwndScreen, SW_SHOW);
             s_pScreenPriv->fRootWindowShown = !s_pScreenPriv->fRootWindowShown;
             return 0;
-#endif
 
-#ifdef XWIN_CLIPBOARD
         case ID_APP_MONITOR_PRIMARY:
             fPrimarySelection = !fPrimarySelection;
             return 0;
-#endif
+
+        case ID_APP_GATHER_WINDOWS:
+            gatherWindows();
+            return 0;
 
         case ID_APP_ABOUT:
             /* Display the About box */
@@ -1190,12 +1275,13 @@ winWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         break;
 
     case WM_GIVEUP:
+        /* Delete the tray Icon */
+        if (!s_pScreenInfo->fNoTrayIcon && s_pScreenPriv->hiconNotifyIcon != NULL)
+            winDeleteNotifyIcon(s_pScreenPriv);
         /* Tell X that we are giving up */
-#ifdef XWIN_MULTIWINDOW
         if (s_pScreenInfo->fMultiWindow)
             winDeinitMultiWindowWM();
-#endif
-        g_fClipboardStarted=FALSE; /* This is to avoid dead-locls caused by the clipboard thread still doing some stuff */
+        g_fClipboardStarted=FALSE; /* This is to avoid dead-locks caused by the clipboard thread still doing some stuff */
         GiveUp(0);
         return 0;
 

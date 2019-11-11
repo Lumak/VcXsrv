@@ -27,15 +27,25 @@
 void
 glamor_format_for_pixmap(PixmapPtr pixmap, GLenum *format, GLenum *type)
 {
+    glamor_pixmap_private       *priv = glamor_get_pixmap_private(pixmap);
     switch (pixmap->drawable.depth) {
     case 24:
     case 32:
         *format = GL_BGRA;
         *type = GL_UNSIGNED_INT_8_8_8_8_REV;
         break;
+    case 30:
+        *format = GL_BGRA;
+        *type = GL_UNSIGNED_INT_2_10_10_10_REV;
+        break;
     case 16:
-        *format = GL_RGB;
-        *type = GL_UNSIGNED_SHORT_5_6_5;
+        if (priv->is_cbcr) {
+          *format = priv->fbo->format;
+          *type = GL_UNSIGNED_BYTE;
+        } else {
+          *format = GL_RGB;
+          *type = GL_UNSIGNED_SHORT_5_6_5;
+        }
         break;
     case 15:
         *format = GL_BGRA;

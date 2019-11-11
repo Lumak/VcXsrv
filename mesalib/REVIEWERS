@@ -58,6 +58,7 @@ F:	src/compiler/nir/
 
 DOCUMENTATION
 R: Emil Velikov <emil.l.velikov@gmail.com>
+R: Eric Engestrom <eric@engestrom.ch>
 F: docs/
 F: doxygen/
 
@@ -68,6 +69,21 @@ F: include/c99*
 DRI LOADER
 R: Emil Velikov <emil.l.velikov@gmail.com>
 F: src/loader/
+
+EGL
+R: Eric Engestrom <eric@engestrom.ch>
+R: Emil Velikov <emil.l.velikov@gmail.com>
+F: src/egl/
+F: include/EGL/
+
+HAIKU
+R: Alexander von Gluck IV <kallisti5@unixzen.com>
+F: include/HaikuGL/
+F: src/egl/drivers/haiku/
+F: src/gallium/state_trackers/hgl/
+F: src/gallium/targets/haiku-softpipe/
+F: src/gallium/winsys/sw/hgl/
+F: src/hgl/
 
 GALLIUM LOADER
 R: Emil Velikov <emil.l.velikov@gmail.com>
@@ -80,6 +96,7 @@ F: src/gallium/targets/
 
 AUTOCONF BUILD
 R: Emil Velikov <emil.l.velikov@gmail.com>
+F: autogen.sh
 F: configure.ac
 F: */Automake.inc
 F: */Makefile.*am
@@ -92,9 +109,22 @@ F: */Makefile.sources
 
 ANDROID BUILD
 R: Emil Velikov <emil.l.velikov@gmail.com>
+R: Rob Herring <robh@kernel.org>
 F: CleanSpec.mk
 F: */Android.*mk
 F: */Makefile.sources
+
+MESON BUILD
+R: Dylan Baker <dylan@pnwbakers.com>
+R: Eric Engestrom <eric@engestrom.ch>
+F: */meson.build
+F: meson.build
+F: meson_options.txt
+
+ANDROID EGL SUPPORT
+R: Rob Herring <robh@kernel.org>
+R: Tomasz Figa <tfiga@chromium.org>
+F: src/egl/drivers/dri2/platform_android.c
 
 WAYLAND EGL SUPPORT
 R: Daniel Stone <daniels@collabora.com>
@@ -104,3 +134,12 @@ F: src/egl/drivers/dri2/platform_wayland.c
 FREEDRENO
 R:	Rob Clark <robclark@freedesktop.org>
 F:	src/gallium/drivers/freedreno/
+
+GLX
+R: Adam Jackson <ajax@redhat.com>
+F: src/glx/
+
+VULKAN
+R: Eric Engestrom <eric@engestrom.ch>
+F: src/vulkan/
+F: include/vulkan/

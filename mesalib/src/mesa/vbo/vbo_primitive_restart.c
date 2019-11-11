@@ -28,13 +28,13 @@
  *
  */
 
+#include "main/errors.h"
 #include "main/imports.h"
-#include "main/bufferobj.h"
 #include "main/macros.h"
 #include "main/varray.h"
 
 #include "vbo.h"
-#include "vbo_context.h"
+
 
 #define UPDATE_MIN2(a, b) (a) = MIN2((a), (b))
 #define UPDATE_MAX2(a, b) (a) = MAX2((a), (b))
@@ -175,10 +175,8 @@ vbo_sw_primitive_restart(struct gl_context *ctx,
    GLuint sub_prim_num;
    GLuint end_index;
    GLuint sub_end_index;
-   GLuint restart_index = _mesa_primitive_restart_index(ctx, ib->type);
+   GLuint restart_index = _mesa_primitive_restart_index(ctx, ib->index_size);
    struct _mesa_prim temp_prim;
-   struct vbo_context *vbo = vbo_context(ctx);
-   vbo_draw_func draw_prims_func = vbo->draw_prims;
    GLboolean map_ib = ib->obj->Name && !ib->obj->Mappings[MAP_INTERNAL].Pointer;
    void *ptr;
 
@@ -226,7 +224,7 @@ vbo_sw_primitive_restart(struct gl_context *ctx,
 
    ptr = ADD_POINTERS(ib->obj->Mappings[MAP_INTERNAL].Pointer, ib->ptr);
 
-   sub_prims = find_sub_primitives(ptr, vbo_sizeof_ib_type(ib->type),
+   sub_prims = find_sub_primitives(ptr, ib->index_size,
                                    0, ib->count, restart_index,
                                    &num_sub_prims);
 
@@ -249,13 +247,13 @@ vbo_sw_primitive_restart(struct gl_context *ctx,
             temp_prim.count = MIN2(sub_end_index, end_index) - temp_prim.start;
             if ((temp_prim.start == sub_prim->start) &&
                 (temp_prim.count == sub_prim->count)) {
-               draw_prims_func(ctx, &temp_prim, 1, ib,
-                               GL_TRUE, sub_prim->min_index, sub_prim->max_index,
-                               NULL, 0, NULL);
+               ctx->Driver.Draw(ctx, &temp_prim, 1, ib, GL_TRUE,
+                                sub_prim->min_index, sub_prim->max_index,
+                                NULL, 0, NULL);
             } else {
-               draw_prims_func(ctx, &temp_prim, 1, ib,
-                               GL_FALSE, -1, -1,
-                               NULL, 0, NULL);
+               ctx->Driver.Draw(ctx, &temp_prim, 1, ib,
+                                GL_FALSE, -1, -1,
+                                NULL, 0, NULL);
             }
          }
          if (sub_end_index >= end_index) {

@@ -12,6 +12,7 @@
 #define U_ATOMIC_H
 
 #include <stdbool.h>
+#include <stdint.h>
 
 /* Favor OS-provided implementations.
  *
@@ -36,6 +37,22 @@
 
 #define PIPE_ATOMIC "GCC Sync Intrinsics"
 
+#if defined(USE_GCC_ATOMIC_BUILTINS)
+
+/* The builtins with explicit memory model are available since GCC 4.7. */
+#define p_atomic_set(_v, _i) __atomic_store_n((_v), (_i), __ATOMIC_RELEASE)
+#define p_atomic_read(_v) __atomic_load_n((_v), __ATOMIC_ACQUIRE)
+#define p_atomic_dec_zero(v) (__atomic_sub_fetch((v), 1, __ATOMIC_ACQ_REL) == 0)
+#define p_atomic_inc(v) (void) __atomic_add_fetch((v), 1, __ATOMIC_ACQ_REL)
+#define p_atomic_dec(v) (void) __atomic_sub_fetch((v), 1, __ATOMIC_ACQ_REL)
+#define p_atomic_add(v, i) (void) __atomic_add_fetch((v), (i), __ATOMIC_ACQ_REL)
+#define p_atomic_inc_return(v) __atomic_add_fetch((v), 1, __ATOMIC_ACQ_REL)
+#define p_atomic_dec_return(v) __atomic_sub_fetch((v), 1, __ATOMIC_ACQ_REL)
+#define p_atomic_xchg(v, i) __atomic_exchange_n((v), (i), __ATOMIC_ACQ_REL)
+#define PIPE_NATIVE_ATOMIC_XCHG
+
+#else
+
 #define p_atomic_set(_v, _i) (*(_v) = (_i))
 #define p_atomic_read(_v) (*(_v))
 #define p_atomic_dec_zero(v) (__sync_sub_and_fetch((v), 1) == 0)
@@ -44,6 +61,13 @@
 #define p_atomic_add(v, i) (void) __sync_add_and_fetch((v), (i))
 #define p_atomic_inc_return(v) __sync_add_and_fetch((v), 1)
 #define p_atomic_dec_return(v) __sync_sub_and_fetch((v), 1)
+
+#endif
+
+/* There is no __atomic_* compare and exchange that returns the current value.
+ * Also, GCC 5.4 seems unable to optimize a compound statement expression that
+ * uses an additional stack variable with __atomic_compare_exchange[_n].
+ */
 #define p_atomic_cmpxchg(v, old, _new) \
    __sync_val_compare_and_swap((v), (old), (_new))
 
@@ -199,6 +223,33 @@
 #error "No pipe_atomic implementation selected"
 #endif
 
+#ifndef PIPE_NATIVE_ATOMIC_XCHG
+static inline uint32_t p_atomic_xchg_32(uint32_t *v, uint32_t i)
+{
+   uint32_t actual = p_atomic_read(v);
+   uint32_t expected;
+   do {
+      expected = actual;
+      actual = p_atomic_cmpxchg(v, expected, i);
+   } while (expected != actual);
+   return actual;
+}
 
+static inline uint64_t p_atomic_xchg_64(uint64_t *v, uint64_t i)
+{
+   uint64_t actual = p_atomic_read(v);
+   uint64_t expected;
+   do {
+      expected = actual;
+      actual = p_atomic_cmpxchg(v, expected, i);
+   } while (expected != actual);
+   return actual;
+}
+
+#define p_atomic_xchg(v, i) ((__typeof(*(v))) \
+   sizeof(*(v)) == sizeof(uint32_t) ? p_atomic_xchg_32((uint32_t *)(v), (uint32_t)(i)) : \
+   sizeof(*(v)) == sizeof(uint64_t) ? p_atomic_xchg_64((uint64_t *)(v), (uint64_t)(i)) : \
+                                      (assert(!"should not get here"), 0))
+#endif
 
 #endif /* U_ATOMIC_H */

@@ -90,7 +90,7 @@ struct save_state
    GLboolean DitherFlag;
 
    /** MESA_META_COLOR_MASK */
-   GLubyte ColorMask[MAX_DRAW_BUFFERS][4];
+   GLbitfield ColorMask;
 
    /** MESA_META_DEPTH_TEST */
    struct gl_depthbuffer_attrib Depth;
@@ -121,11 +121,11 @@ struct save_state
 
    /** MESA_META_SHADER */
    GLboolean VertexProgramEnabled;
-   struct gl_vertex_program *VertexProgram;
+   struct gl_program *VertexProgram;
    GLboolean FragmentProgramEnabled;
-   struct gl_fragment_program *FragmentProgram;
+   struct gl_program *FragmentProgram;
    GLboolean ATIFragmentShaderEnabled;
-   struct gl_shader_program *Shader[MESA_SHADER_STAGES];
+   struct gl_program *Program[MESA_SHADER_STAGES];
    struct gl_shader_program *ActiveShader;
    struct gl_pipeline_object   *Pipeline;
 
@@ -158,7 +158,7 @@ struct save_state
 
    /** MESA_META_VIEWPORT */
    GLfloat ViewportX, ViewportY, ViewportW, ViewportH;
-   GLclampd DepthNear, DepthFar;
+   GLclampf DepthNear, DepthFar;
 
    /** MESA_META_CLAMP_FRAGMENT_COLOR */
    GLenum ClampFragmentColor;
@@ -190,7 +190,7 @@ struct save_state
    struct gl_framebuffer *ReadBuffer;
 
    /** MESA_META_DRAW_BUFFERS */
-   GLenum ColorDrawBuffers[MAX_DRAW_BUFFERS];
+   GLenum16 ColorDrawBuffers[MAX_DRAW_BUFFERS];
 };
 
 /**
@@ -200,7 +200,7 @@ struct save_state
  */
 struct temp_texture
 {
-   GLuint TexObj;
+   struct gl_texture_object *tex_obj;
    GLenum Target;         /**< GL_TEXTURE_2D or GL_TEXTURE_RECTANGLE */
    GLsizei MinSize;       /**< Min texture size to allocate */
    GLsizei MaxSize;       /**< Max possible texture size */
@@ -312,8 +312,9 @@ struct fb_tex_blit_state
    GLint baseLevelSave, maxLevelSave;
    struct gl_sampler_object *samp_obj;
    struct gl_sampler_object *samp_obj_save;
+   struct gl_texture_object *tex_obj;
+   struct gl_texture_object *temp_tex_obj;
    GLuint stencilSamplingSave;
-   GLuint tempTex;
 };
 
 
@@ -462,12 +463,9 @@ extern void
 _mesa_meta_fb_tex_blit_end(struct gl_context *ctx, GLenum target,
                            struct fb_tex_blit_state *blit);
 
-extern GLboolean
-_mesa_meta_bind_rb_as_tex_image(struct gl_context *ctx,
-                                struct gl_renderbuffer *rb,
-                                GLuint *tex,
-                                struct gl_texture_object **texObj,
-                                GLenum *target);
+extern struct gl_texture_object *
+_mesa_meta_texture_object_from_renderbuffer(struct gl_context *ctx,
+                                            struct gl_renderbuffer *rb);
 
 struct gl_sampler_object *
 _mesa_meta_setup_sampler(struct gl_context *ctx,
@@ -491,16 +489,6 @@ _mesa_meta_and_swrast_BlitFramebuffer(struct gl_context *ctx,
                                       GLint dstX0, GLint dstY0,
                                       GLint dstX1, GLint dstY1,
                                       GLbitfield mask, GLenum filter);
-
-bool
-_mesa_meta_CopyImageSubData_uncompressed(struct gl_context *ctx,
-                                         struct gl_texture_image *src_tex_image,
-                                         struct gl_renderbuffer *src_renderbuffer,
-                                         int src_x, int src_y, int src_z,
-                                         struct gl_texture_image *dst_tex_image,
-                                         struct gl_renderbuffer *dst_renderbuffer,
-                                         int dst_x, int dst_y, int dst_z,
-                                         int src_width, int src_height);
 
 extern void
 _mesa_meta_Clear(struct gl_context *ctx, GLbitfield buffers);
@@ -529,23 +517,6 @@ _mesa_meta_Bitmap(struct gl_context *ctx,
 extern void
 _mesa_meta_GenerateMipmap(struct gl_context *ctx, GLenum target,
                           struct gl_texture_object *texObj);
-
-extern bool
-_mesa_meta_pbo_TexSubImage(struct gl_context *ctx, GLuint dims,
-                           struct gl_texture_image *tex_image,
-                           int xoffset, int yoffset, int zoffset,
-                           int width, int height, int depth,
-                           GLenum format, GLenum type, const void *pixels,
-                           bool create_pbo,
-                           const struct gl_pixelstore_attrib *packing);
-
-extern bool
-_mesa_meta_pbo_GetTexSubImage(struct gl_context *ctx, GLuint dims,
-                              struct gl_texture_image *tex_image,
-                              int xoffset, int yoffset, int zoffset,
-                              int width, int height, int depth,
-                              GLenum format, GLenum type, const void *pixels,
-                              const struct gl_pixelstore_attrib *packing);
 
 extern void
 _mesa_meta_CopyTexSubImage(struct gl_context *ctx, GLuint dims,

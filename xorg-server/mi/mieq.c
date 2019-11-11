@@ -87,24 +87,6 @@ typedef struct _EventQueue {
 
 static EventQueueRec miEventQueue;
 
-#ifdef XQUARTZ
-extern BOOL serverRunning;
-extern pthread_mutex_t serverRunningMutex;
-extern pthread_cond_t serverRunningCond;
-
-static inline void
-wait_for_server_init(void)
-{
-    /* If the server hasn't finished initializing, wait for it... */
-    if (!serverRunning) {
-        pthread_mutex_lock(&serverRunningMutex);
-        while (!serverRunning)
-            pthread_cond_wait(&serverRunningCond, &serverRunningMutex);
-        pthread_mutex_unlock(&serverRunningMutex);
-    }
-}
-#endif
-
 static size_t
 mieqNumEnqueued(EventQueuePtr eventQueue)
 {
@@ -219,10 +201,6 @@ mieqEnqueue(DeviceIntPtr pDev, InternalEvent *e)
     Time time;
     size_t n_enqueued;
 
-#ifdef XQUARTZ
-    wait_for_server_init();
-#endif
-
     verify_internal_event(e);
 
     n_enqueued = mieqNumEnqueued(&miEventQueue);
@@ -311,7 +289,7 @@ mieqSwitchScreen(DeviceIntPtr pDev, ScreenPtr pScreen, Bool set_dequeue_screen)
 void
 mieqSetHandler(int event, mieqHandler handler)
 {
-    if (handler && miEventQueue.handlers[event])
+    if (handler && miEventQueue.handlers[event] != handler)
         ErrorF("[mi] mieq: warning: overriding existing handler %p with %p for "
                "event %d\n", miEventQueue.handlers[event], handler, event);
 
@@ -342,7 +320,7 @@ ChangeDeviceID(DeviceIntPtr dev, InternalEvent *event)
     case ET_TouchOwnership:
         event->touch_ownership_event.deviceid = dev->id;
         break;
-#if XFreeXDGA
+#ifdef XFreeXDGA
     case ET_DGAEvent:
         break;
 #endif
@@ -407,7 +385,7 @@ CopyGetMasterEvent(DeviceIntPtr sdev,
     if (!sdev || IsMaster(sdev) || IsFloating(sdev))
         return NULL;
 
-#if XFreeXDGA
+#ifdef XFreeXDGA
     if (type == ET_DGAEvent)
         type = original->dga_event.subtype;
 #endif

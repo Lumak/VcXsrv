@@ -23,5 +23,13 @@ include Makefile.sources
 
 noinst_LTLIBRARIES =
 
-EXTRA_DIST = $(COMMON_HEADER_FILES)
 include Makefile.addrlib.am
+include Makefile.common.am
+
+EXTRA_DIST = \
+     $(COMMON_HEADER_FILES) \
+     common/sid_tables.py \
+     meson.build \
+     addrlib/meson.build \
+     common/meson.build \
+     vulkan/meson.build

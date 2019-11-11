@@ -61,6 +61,7 @@ typedef HRESULT  (__stdcall *  SHGETFOLDERPATHPROC)(HWND hwndOwner,
 #include "glx_extinit.h"
 #ifdef XWIN_GLX_WINDOWS
 #include "glx/glwindows.h"
+#include "dri/windowsdri.h"
 #endif
 
 /*
@@ -71,6 +72,9 @@ typedef HRESULT  (__stdcall *  SHGETFOLDERPATHPROC)(HWND hwndOwner,
  * Function prototypes
  */
 
+static Bool
+ winCheckDisplayNumber(void);
+
 void
  winLogCommandLine(int argc, char *argv[]);
 
@@ -79,10 +83,6 @@ void
 
 Bool
  winValidateArgs(void);
-
-#ifdef RELOCATE_PROJECTROOT
-const char *winGetBaseDir(void);
-#endif
 
 /*
  * For the depth 24 pixmap we default to 32 bits per pixel, but
@@ -107,13 +107,11 @@ static PixmapFormatRec g_PixmapFormats[] = {
     {32, 32, BITMAP_SCANLINE_PAD}
 };
 
-const int NUMFORMATS = sizeof(g_PixmapFormats) / sizeof(g_PixmapFormats[0]);
-
+#if defined(GLXEXT) && defined(XWIN_WINDOWS_DRI)
 static const ExtensionModule xwinExtensions[] = {
-#ifdef GLXEXT
-  { GlxExtensionInit, "GLX", &noGlxExtension },
-#endif
+  { WindowsDRIExtensionInit, "Windows-DRI", &noDriExtension },
 };
+#endif
 
 /*
  * XwinExtensionInit
@@ -129,7 +127,11 @@ void XwinExtensionInit(void)
     }
 #endif
 
+#if defined(GLXEXT) && defined(XWIN_WINDOWS_DRI)
     LoadExtensionList(xwinExtensions, ARRAY_SIZE(xwinExtensions), TRUE);
+#else
+    LoadExtensionList(NULL, 0, TRUE);
+#endif
 }
 
 #if defined(DDXBEFORERESET)
@@ -143,9 +145,7 @@ ddxBeforeReset(void)
 {
     winDebug("ddxBeforeReset - Hello\n");
 
-#ifdef XWIN_CLIPBOARD
     winClipboardShutdown();
-#endif
 }
 #endif
 
@@ -183,13 +183,11 @@ ddxGiveUp(enum ExitCode error)
             winDeleteNotifyIcon(winGetScreenPriv(g_ScreenInfo[i].pScreen));
     }
 
-#ifdef XWIN_MULTIWINDOW
     /* Unload libraries for taskbar grouping */
     winPropertyStoreDestroy();
 
     /* Notify the worker threads we're exiting */
     winDeinitMultiWindowWM();
-#endif
 
 #ifdef HAS_DEVWINDOWS
     /* Close our handle to our message queue */
@@ -236,14 +234,6 @@ ddxGiveUp(enum ExitCode error)
     }
 
     winDebug("ddxGiveUp - End\n");
-}
-
-/* See Porting Layer Definition - p. 57 */
-void
-AbortDDX(enum ExitCode error)
-{
-    winDebug("AbortDDX\n");
-    ddxGiveUp(error);
 }
 
 #ifdef __CYGWIN__
@@ -355,7 +345,7 @@ winGetBaseDir(void)
         fendptr = buffer + size;
         while (fendptr > buffer) {
             if (*fendptr == '\\' || *fendptr == '/') {
-                *fendptr = 0;
+                fendptr[1] = 0; // Include ending slash
                 break;
             }
             fendptr--;
@@ -381,13 +371,13 @@ winFixupPaths(void)
     {
         /* Open fontpath configuration file */
 #if defined WIN32 && defined __MINGW32__
-        static Bool once = False;
+        static Bool once = FALSE;
         char buffer[MAX_PATH];
-        snprintf(buffer, sizeof(buffer), "%s\\font-dirs", basedir);
+        snprintf(buffer, sizeof(buffer), "%sfont-dirs", basedir);
         buffer[sizeof(buffer)-1] = 0;
         FILE *fontdirs = fopen(buffer, "rt");
         if (once) fontdirs = NULL;
-        else once = True;
+        else once = TRUE;
 #else
         FILE *fontdirs = fopen(ETCX11DIR "/font-dirs", "rt");
 #endif
@@ -488,7 +478,7 @@ winFixupPaths(void)
 #endif                          /* READ_FONTDIRS */
 #ifdef RELOCATE_PROJECTROOT
     {
-        const char *libx11dir = PROJECTROOT "/lib/X11";
+        const char *libx11dir = PROJECTROOT "/";
         size_t libx11dir_len = strlen(libx11dir);
         char *newfp = NULL;
         size_t newfp_len = 0;
@@ -560,27 +550,27 @@ winFixupPaths(void)
     if (getenv("XKEYSYMDB") == NULL) {
         char buffer[MAX_PATH];
 
-        snprintf(buffer, sizeof(buffer), "XKEYSYMDB=%s\\XKeysymDB", basedir);
+        snprintf(buffer, sizeof(buffer), "XKEYSYMDB=%sXKeysymDB", basedir);
         buffer[sizeof(buffer) - 1] = 0;
         putenv(buffer);
     }
     if (getenv("XERRORDB") == NULL) {
         char buffer[MAX_PATH];
 
-        snprintf(buffer, sizeof(buffer), "XERRORDB=%s\\XErrorDB", basedir);
+        snprintf(buffer, sizeof(buffer), "XERRORDB=%sXErrorDB", basedir);
         buffer[sizeof(buffer) - 1] = 0;
         putenv(buffer);
     }
     if (getenv("XLOCALEDIR") == NULL) {
         char buffer[MAX_PATH];
 
-        snprintf(buffer, sizeof(buffer), "XLOCALEDIR=%s\\locale", basedir);
+        snprintf(buffer, sizeof(buffer), "XLOCALEDIR=%slocale", basedir);
         buffer[sizeof(buffer) - 1] = 0;
         putenv(buffer);
     }
     if (getenv("XHOSTPREFIX") == NULL) {
         char buffer[MAX_PATH];
-        snprintf(buffer, sizeof(buffer), "XHOSTPREFIX=%s\\X",
+        snprintf(buffer, sizeof(buffer), "XHOSTPREFIX=%sX",
                 basedir);
         buffer[sizeof(buffer)-1] = 0;
         putenv(buffer);
@@ -616,7 +606,7 @@ winFixupPaths(void)
     {
         static char xkbbasedir[MAX_PATH];
 
-        snprintf(xkbbasedir, sizeof(xkbbasedir), "%s\\xkbdata", basedir);
+        snprintf(xkbbasedir, sizeof(xkbbasedir), "%sxkbdata", basedir);
         if (sizeof(xkbbasedir) > 0)
             xkbbasedir[sizeof(xkbbasedir) - 1] = 0;
         XkbBaseDirectory = xkbbasedir;
@@ -731,19 +721,27 @@ winUseMsg(void)
     ErrorF(EXECUTABLE_NAME " Device Dependent Usage:\n");
     ErrorF("\n");
 
-#ifdef XWIN_CLIPBOARD
     ErrorF("-[no]clipboard\n"
            "\tEnable [disable] the clipboard integration. Default is enabled.\n");
-  ErrorF ("-[no]clipboardprimary\n"
-	  "\t[Do not] map the PRIMARY selection to the windows clipboard.\n"
+    ErrorF ("-noprimary\n"
+	        "\tDo not map the PRIMARY selection to the windows clipboard.\n"
           "\tThe CLIPBOARD selection is always mapped if -clipboard is enabled.\n"
           "\tDefault is mapped.\n");
-#endif
 
     ErrorF("-clipupdates num_boxes\n"
            "\tUse a clipping region to constrain shadow update blits to\n"
            "\tthe updated region when num_boxes, or more, are in the\n"
-           "\tupdated region.\n");
+           "\tupdated region.  Diminished effect on current Windows\n"
+           "\tversions because they already group GDI operations together\n"
+           "\tin a batch, which has a similar effect.\n");
+
+    ErrorF("-[no]compositewm\n"
+           "\tEnable [Disable] Composite extension. Default is enabled.\n"
+           "\tUsed in -multiwindow mode.\n"
+           "\tUse Composite extension redirection to maintain a bitmap\n"
+           "\timage of each top-level X window, so window contents which\n"
+           "\tare occluded show correctly in Taskbar and Task Switcher\n"
+           "\tpreviews.\n");
 
 #ifdef XWIN_XF86CONFIG
     ErrorF("-config\n" "\tSpecify a configuration file.\n");
@@ -810,9 +808,9 @@ winUseMsg(void)
            "\tUse the entire virtual screen if multiple\n"
            "\tmonitors are present.\n");
 
-#ifdef XWIN_MULTIWINDOW
-    ErrorF("-multiwindow\n" "\tRun the server in multi-window mode.\n");
-#endif
+    ErrorF("-multiwindow\n"
+           "\tRun the server in multiwindow mode.  Not to be used\n"
+           "\ttogether with -rootless or -fullscreen.\n");
 
 #ifdef XWIN_MULTIWINDOWEXTWM
     ErrorF("-mwextwm\n"
@@ -821,27 +819,28 @@ winUseMsg(void)
 
     ErrorF("-nodecoration\n"
            "\tDo not draw a window border, title bar, etc.  Windowed\n"
-           "\tmode only.\n");
+           "\tmode only i.e. ignored when -fullscreen specified.\n");
 
-#ifdef XWIN_CLIPBOARD
     ErrorF("-nounicodeclipboard\n"
-           "\tDo not use Unicode clipboard even if on a NT-based platform.\n");
+           "\tDisable Unicode in the clipboard.\n");
 
     ErrorF("-[no]primary\n"
            "\tWhen clipboard integration is enabled, map the X11 PRIMARY selection\n"
            "\tto the Windows clipboard. Default is enabled.\n");
-#endif
 
     ErrorF("-refresh rate_in_Hz\n"
            "\tSpecify an optional refresh rate to use in fullscreen mode\n"
            "\twith a DirectDraw engine.\n");
 
-    ErrorF("-resize=none|scrollbars|randr"
+    ErrorF("-resize=none|scrollbars|randr\n"
            "\tIn windowed mode, [don't] allow resizing of the window. 'scrollbars'\n"
            "\tmode gives the window scrollbars as needed, 'randr' mode uses the RANR\n"
            "\textension to resize the X screen.  'randr' is the default.\n");
 
-    ErrorF("-rootless\n" "\tRun the server in rootless mode.\n");
+    ErrorF("-rootless\n"
+           "\tUse a transparent root window with an external window\n"
+           "\tmanager (such as openbox).  Not to be used with\n"
+           "\t-multiwindow or with -fullscreen.\n");
 
     ErrorF("-screen scr_num [width height [x y] | [[WxH[+X+Y]][@m]] ]\n"
            "\tEnable screen scr_num and optionally specify a width and\n"
@@ -858,12 +857,14 @@ winUseMsg(void)
            "\tcursor instead.\n");
 
     ErrorF("-[no]trayicon\n"
-           "\tDo not create a tray icon.  Default is to create one\n"
-           "\ticon per screen.  You can globally disable tray icons with\n"
-           "\t-notrayicon, then enable it for specific screens with\n"
-           "\t-trayicon for those screens.\n");
+           "\tDo not create a notification area icon.  Default is to create\n"
+           "\tone icon per screen.  You can globally disable notification area\n"
+           "\ticons with -notrayicon, then enable them for specific screens\n"
+           "\twith -trayicon for those screens.\n");
 
-    ErrorF("-[no]unixkill\n" "\tCtrl+Alt+Backspace exits the X Server.\n");
+    ErrorF("-[no]unixkill\n"
+           "\tCtrl-Alt-Backspace exits the X Server. The Ctrl-Alt-Backspace\n"
+           "\tkey combo is disabled by default.\n");
 
     ErrorF("-[no]wgl\n"
            "\tEnable the GLX extension to use the native Windows WGL interface for hardware-accelerated OpenGL\n");
@@ -874,20 +875,22 @@ winUseMsg(void)
     ErrorF("-[no]winkill\n" "\tAlt+F4 exits the X Server.\n");
 
     ErrorF("-xkblayout XKBLayout\n"
-           "\tEquivalent to XKBLayout in XF86Config files.\n"
+           "\tSet the layout to use for XKB.  This defaults to a layout\n"
+           "\tmatching your current layout from Windows or us (i.e. USA)\n"
+           "\tif no matching layout was found.\n"
            "\tFor example: -xkblayout de\n");
 
     ErrorF("-xkbmodel XKBModel\n"
-           "\tEquivalent to XKBModel in XF86Config files.\n");
+           "\tSet the model to use for XKB.  This defaults to pc105.\n");
 
     ErrorF("-xkboptions XKBOptions\n"
-           "\tEquivalent to XKBOptions in XF86Config files.\n");
+           "\tSet the options to use for XKB.  This defaults to not set.\n");
 
     ErrorF("-xkbrules XKBRules\n"
-           "\tEquivalent to XKBRules in XF86Config files.\n");
+           "\tSet the rules to use for XKB.  This defaults to xorg.\n");
 
     ErrorF("-xkbvariant XKBVariant\n"
-           "\tEquivalent to XKBVariant in XF86Config files.\n"
+           "\tSet the variant to use for XKB.  This defaults to not set.\n"
            "\tFor example: -xkbvariant nodeadkeys\n");
 }
 
@@ -938,6 +941,12 @@ InitOutput(ScreenInfo * pScreenInfo, int argc, char *argv[])
                    "Exiting.\n");
     }
 
+    /* Check for duplicate invocation on same display number. */
+    if (serverGeneration == 1 && !winCheckDisplayNumber()) {
+        FatalError("InitOutput - Another X server is already running display-"
+                   "number :%d\n", atoi(display));
+    }
+
 #ifdef XWIN_XF86CONFIG
     /* Try to read the xorg.conf-style configuration file */
     if (!winReadConfigfile())
@@ -954,10 +963,10 @@ InitOutput(ScreenInfo * pScreenInfo, int argc, char *argv[])
     pScreenInfo->bitmapScanlinePad = BITMAP_SCANLINE_PAD;
     pScreenInfo->bitmapScanlineUnit = BITMAP_SCANLINE_UNIT;
     pScreenInfo->bitmapBitOrder = BITMAP_BIT_ORDER;
-    pScreenInfo->numPixmapFormats = NUMFORMATS;
+    pScreenInfo->numPixmapFormats = ARRAY_SIZE(g_PixmapFormats);
 
     /* Describe how we want common pixmap formats padded */
-    for (i = 0; i < NUMFORMATS; i++) {
+    for (i = 0; i < ARRAY_SIZE(g_PixmapFormats); i++) {
         pScreenInfo->formats[i] = g_PixmapFormats[i];
     }
 
@@ -966,10 +975,8 @@ InitOutput(ScreenInfo * pScreenInfo, int argc, char *argv[])
 
     /* Detect supported engines */
     winDetectSupportedEngines();
-#ifdef XWIN_MULTIWINDOW
     /* Load libraries for taskbar grouping */
     winPropertyStoreInit();
-#endif
 
     /* Store the instance handle */
     g_hInstance = GetModuleHandle(NULL);
@@ -1039,7 +1046,7 @@ InitOutput(ScreenInfo * pScreenInfo, int argc, char *argv[])
         }
     }
 
-#if defined(XWIN_CLIPBOARD) || defined(XWIN_MULTIWINDOW)
+    xorgGlxCreateVendor();
 
     /* Generate a cookie used by internal clients for authorization */
     if (g_fXdmcpEnabled || g_fAuthEnabled)
@@ -1062,9 +1069,75 @@ InitOutput(ScreenInfo * pScreenInfo, int argc, char *argv[])
             ErrorF ("Warning: Locale not supported by X, falling back to 'C' locale.\n");
             setlocale(LC_ALL, "C");
           }
-
     }
-#endif
 
     winDebug("InitOutput - Returning.\n");
+}
+
+/*
+ * winCheckDisplayNumber - Check if another instance of Cygwin/X is
+ * already running on the same display number.  If no one exists,
+ * make a mutex to prevent new instances from running on the same display.
+ *
+ * return FALSE if the display number is already used.
+ */
+
+static Bool
+winCheckDisplayNumber(void)
+{
+    int nDisp;
+    HANDLE mutex;
+    char name[MAX_PATH];
+    const char *pszPrefix = 0;
+    OSVERSIONINFO osvi = { 0 };
+
+    /* Check display range */
+    nDisp = atoi(display);
+    if (nDisp < 0 || nDisp > 65535 - X_TCP_PORT) {
+        ErrorF("winCheckDisplayNumber - Bad display number: %d\n", nDisp);
+        return FALSE;
+    }
+
+    /* Set first character of mutex name to null */
+    name[0] = '\0';
+
+    /* Get operating system version information */
+    osvi.dwOSVersionInfoSize = sizeof(osvi);
+    GetVersionEx(&osvi);
+
+    /* Want a mutex shared among all terminals on NT > 4.0 */
+    if (osvi.dwPlatformId == VER_PLATFORM_WIN32_NT && osvi.dwMajorVersion >= 5) {
+        pszPrefix = "Global\\";
+    }
+
+    /* Setup Cygwin/X specific part of name */
+    snprintf(name, sizeof(name), "%sCYGWINX_DISPLAY:%d", pszPrefix, nDisp);
+
+    /* Windows automatically releases the mutex when this process exits */
+    mutex = CreateMutex(NULL, FALSE, name);
+    if (!mutex) {
+        LPVOID lpMsgBuf;
+
+        /* Display a fancy error message */
+        FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER |
+                      FORMAT_MESSAGE_FROM_SYSTEM |
+                      FORMAT_MESSAGE_IGNORE_INSERTS,
+                      NULL,
+                      GetLastError(),
+                      MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+                      (LPTSTR) &lpMsgBuf, 0, NULL);
+        ErrorF("winCheckDisplayNumber - CreateMutex failed: %s\n",
+               (LPSTR) lpMsgBuf);
+        LocalFree(lpMsgBuf);
+
+        return FALSE;
+    }
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {
+        ErrorF("winCheckDisplayNumber - "
+               "Xming or Cygwin/X is already running display-number :%d\n",
+               nDisp);
+        return FALSE;
+    }
+
+    return TRUE;
 }

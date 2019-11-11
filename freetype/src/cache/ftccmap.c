@@ -4,7 +4,7 @@
 /*                                                                         */
 /*    FreeType CharMap cache (body)                                        */
 /*                                                                         */
-/*  Copyright 2000-2016 by                                                 */
+/*  Copyright 2000-2018 by                                                 */
 /*  David Turner, Robert Wilhelm, and Werner Lemberg.                      */
 /*                                                                         */
 /*  This file is part of the FreeType project, and may only be used,       */
@@ -20,9 +20,9 @@
 #include FT_FREETYPE_H
 #include FT_CACHE_H
 #include "ftcmanag.h"
-#include <freetype/internal/ftmemory.h>
-#include <freetype/internal/objects.h>
-#include <freetype/internal/ftdebug.h>
+#include FT_INTERNAL_MEMORY_H
+#include FT_INTERNAL_OBJECTS_H
+#include FT_INTERNAL_DEBUG_H
 
 #include "ftccback.h"
 #include "ftcerror.h"
@@ -201,15 +201,15 @@
   static
   const FTC_CacheClassRec  ftc_cmap_cache_class =
   {
-    ftc_cmap_node_new,
-    ftc_cmap_node_weight,
-    ftc_cmap_node_compare,
-    ftc_cmap_node_remove_faceid,
-    ftc_cmap_node_free,
+    ftc_cmap_node_new,           /* FTC_Node_NewFunc      node_new           */
+    ftc_cmap_node_weight,        /* FTC_Node_WeightFunc   node_weight        */
+    ftc_cmap_node_compare,       /* FTC_Node_CompareFunc  node_compare       */
+    ftc_cmap_node_remove_faceid, /* FTC_Node_CompareFunc  node_remove_faceid */
+    ftc_cmap_node_free,          /* FTC_Node_FreeFunc     node_free          */
 
     sizeof ( FTC_CacheRec ),
-    ftc_cache_init,
-    ftc_cache_done,
+    ftc_cache_init,              /* FTC_Cache_InitFunc    cache_init         */
+    ftc_cache_done,              /* FTC_Cache_DoneFunc    cache_done         */
   };
 
 
@@ -258,9 +258,6 @@
       FT_TRACE0(( "FTC_CMapCache_Lookup: bad arguments, returning 0\n" ));
       return 0;
     }
-
-    if ( !face_id )
-      return 0;
 
     query.face_id    = face_id;
     query.cmap_index = (FT_UInt)cmap_index;

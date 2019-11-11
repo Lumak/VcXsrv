@@ -32,14 +32,21 @@ from The Open Group.
 
 #include <X11/X.h>
 #include <X11/Xproto.h>
-#include <X11/fonts/fontmisc.h>
+#include "fontmisc.h"
 #include <X11/fonts/fontstruct.h>
-#include <X11/fonts/fntfilio.h>
-#include <X11/fonts/fntfil.h>
-#include <X11/fonts/bdfint.h>
-#include <X11/fonts/pcf.h>
+#include "fntfilio.h"
+#include "fntfil.h"
+#include "bdfint.h"
+#include "pcf.h"
 #include <stdio.h>
 #include <X11/Xos.h>
+
+#ifndef STDIN_FILENO
+#define STDIN_FILENO 0
+#endif
+#ifndef STDOUT_FILENO
+#define STDOUT_FILENO 1
+#endif
 
 int
 main(int argc, char *argv[])
@@ -145,10 +152,12 @@ main(int argc, char *argv[])
         else {
             if (input_name) {
  usage:
+                fprintf(stderr, "%s: invalid option '%s'\n",
+                        program_name, argv[0]);
                 fprintf(stderr,
                         "usage: %s [-p#] [-u#] [-m] [-l] [-M] [-L] [-t] [-i] [-o pcf file] [bdf file]\n"
                         "       where # for -p is 1, 2, 4, or 8\n"
-                        "       and   # for -s is 1, 2, or 4\n",
+                        "       and   # for -u is 1, 2, or 4\n",
                         program_name);
                 exit(1);
             }

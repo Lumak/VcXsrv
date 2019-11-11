@@ -1,0 +1,5 @@
+image: nwnk/xserver-travis-rawhide:v5
+
+job:
+    script:
+        - ./test/scripts/build-travis-deps.sh

@@ -26,7 +26,7 @@
 #define BUILDERSTRING ""
 
 /* Default font path */
-#define COMPILEDDEFAULTFONTPATH "fonts/misc/,fonts/TTF/,fonts/OTF,fonts/Type1/,fonts/100dpi/,fonts/75dpi/,fonts/cyrillic/,fonts/Speedo/,fonts/terminus-font/,built-ins"
+#define COMPILEDDEFAULTFONTPATH "./fonts/misc/,./fonts/TTF/,./fonts/OTF,./fonts/Type1/,./fonts/100dpi/,./fonts/75dpi/,./fonts/cyrillic/,./fonts/Speedo/,./fonts/terminus-font/,built-ins"
 
 /* Miscellaneous server configuration files path */
 #define SERVER_MISC_CONFIG_PATH "."
@@ -47,7 +47,7 @@
 #define DPMSExtension 1
 
 /* Build DRI3 extension */
-/* #undef DRI3 */
+#undef DRI3
 
 /* Build GLX extension */
 #define GLXEXT
@@ -72,16 +72,10 @@
 #undef HAVE_BACKTRACE
 
 /* Has libunwind support */
-/* #undef HAVE_LIBUNWIND */
-
-/* Define to 1 if you have the <byteswap.h> header file. */
-#define HAVE_BYTESWAP_H 1
+#undef HAVE_LIBUNWIND
 
 /* Define to 1 if you have the `cbrt' function. */
 #undef HAVE_CBRT
-
-/* Define to 1 if you have the <dbm.h> header file. */
-#undef HAVE_DBM_H
 
 /* Define to 1 if you have the declaration of `program_invocation_short_name', and
    to 0 if you don't. */
@@ -99,9 +93,6 @@
 
 /* Define to 1 if you have the <fcntl.h> header file. */
 #define HAVE_FCNTL_H 1
-
-/* Define to 1 if you have the `ffs' function. */
-#undef HAVE_FFS
 
 /* Define to 1 if you have the `getdtablesize' function. */
 #define HAVE_GETDTABLESIZE 1
@@ -136,6 +127,9 @@
 /* Build a standalone xpbproxy */
 #undef STANDALONE_XPBPROXY
 
+/* Define to 1 if you have the `bsd' library (-lbsd). */
+#undef HAVE_LIBBSD
+
 /* Define to 1 if you have the `m' library (-lm). */
 #define HAVE_LIBM 1
 
@@ -151,11 +145,17 @@
 /* Define to 1 if you have the <linux/fb.h> header file. */
 #undef HAVE_LINUX_FB_H
 
+/* Define to 1 if you have the `mkostemp' function. */
+#undef HAVE_MKOSTEMP
+
 /* Define to 1 if you have the `mmap' function. */
 #undef HAVE_MMAP
 
-/* Define to 1 if you have the <ndbm.h> header file. */
-#undef HAVE_NDBM_H
+/* Define to 1 if you have the function pthread_setname_np(const char*) */
+#undef HAVE_PTHREAD_SETNAME_NP_WITHOUT_TID
+
+/* Define to 1 if you have the function pthread_setname_np(pthread_t, const char*) */
+#undef HAVE_PTHREAD_SETNAME_NP_WITH_TID
 
 /* Define to 1 if you have the <ndir.h> header file, and it defines `DIR'. */
 #undef HAVE_NDIR_H
@@ -163,8 +163,8 @@
 /* Define to 1 if you have the `reallocarray' function. */
 #undef HAVE_REALLOCARRAY
 
-/* Define to 1 if you have the <rpcsvc/dbm.h> header file. */
-#undef HAVE_RPCSVC_DBM_H
+/* Define to 1 if you have the `arc4random_buf' function. */
+#undef HAVE_ARC4RANDOM_BUF
 
 /* Define to use libc SHA1 functions */
 #undef HAVE_SHA1_IN_LIBC
@@ -246,8 +246,8 @@
 /* Define to 1 if you have the <sys/utsname.h> header file. */
 #undef HAVE_SYS_UTSNAME_H
 
-/* Define to 1 if you have the <tslib.h> header file. */
-#undef HAVE_TSLIB_H
+/* Define to 1 if you have the `timingsafe_memcmp' function. */
+#undef HAVE_TIMINGSAFE_MEMCMP
 
 /* Define to 1 if you have the <unistd.h> header file. */
 #undef HAVE_UNISTD_H
@@ -324,17 +324,8 @@
 /* Support TCP socket connections */
 #define TCPCONN 1
 
-/* Enable touchscreen support */
-#undef TOUCHSCREEN
-
-/* Support tslib touchscreen abstraction library */
-#undef TSLIB
-
 /* Support UNIX socket connections */
 #undef UNIXCONN
-
-/* Define to use byteswap macros from <sys/endian.h> */
-#undef USE_SYS_ENDIAN_H
 
 /* unaligned word accesses behave as expected */
 #undef WORKING_UNALIGNED_INT
@@ -382,7 +373,7 @@
 #undef XORG_RELEASE
 
 /* Current Xorg version */
-#define XORG_VERSION_CURRENT (((1) * 10000000) + ((18) * 100000) + ((3) * 1000) + 0)
+#define XORG_VERSION_CURRENT (((1) * 10000000) + ((20) * 100000) + ((1) * 1000) + 4)
 
 /* Xorg release date */
 #define XORG_DATE "16 November 2015"
@@ -413,9 +404,6 @@
 
 /* Vendor name */
 #define XVENDORNAME "The VcXsrv Project"
-
-/* Endian order */
-#ifndef X_BYTE_ORDER
 
 /* Number of bits in a file offset, on hosts where this is settable. */
 #undef _FILE_OFFSET_BITS
@@ -472,25 +460,13 @@
 #undef MONOTONIC_CLOCK
 
 /* Define to 1 if the DTrace Xserver provider probes should be built in */
-#undef XSERVER_DTRACE
-
-/* Define to 16-bit byteswap macro */
-#undef bswap_16
-
-/* Define to 32-bit byteswap macro */
-#undef bswap_32
-
-/* Define to 64-bit byteswap macro */
-#undef bswap_64
+/*#define XSERVER_DTRACE*/
 
 /* Define to 1 if typeof works with your compiler. */
 #undef HAVE_TYPEOF
 
 /* Define to __typeof__ if your compiler spells it that way. */
 #undef typeof
-
-/* The compiler supported TLS storage class, prefering initial-exec if tls_model is supported */
-#undef TLS
 
 /* Correctly set _XSERVER64 for OSX fat binaries */
 #ifdef __APPLE__
@@ -535,6 +511,12 @@
 /* Build glamor/gbm has linear support */
 #undef GLAMOR_HAS_GBM_LINEAR
 
+/* GBM has modifiers support */
+#undef GBM_BO_WITH_MODIFIERS
+
+/* Glamor can use eglQueryDmaBuf* functions */
+#undef GLAMOR_HAS_EGL_QUERY_DMABUF
+
 /* byte order */
 #define _X_BYTE_ORDER X_LITTLE_ENDIAN
 /* Deal with multiple architecture compiles on Mac OS X */
@@ -545,7 +527,6 @@
 #define X_BYTE_ORDER X_BIG_ENDIAN
 #else
 #define X_BYTE_ORDER X_LITTLE_ENDIAN
-#endif
 #endif
 #endif
 
@@ -569,6 +550,12 @@
 
 /* Use input thread */
 #undef INPUTTHREAD
+
+/* Have poll() */
+#undef HAVE_POLL
+
+/* Have epoll_create1() */
+#undef HAVE_EPOLL_CREATE1
 
 #include <X11/Xwinsock.h>
 #include <X11/Xwindows.h>

@@ -57,11 +57,44 @@ C_SOURCES := \
 	draw/draw_vs_exec.c \
 	draw/draw_vs.h \
 	draw/draw_vs_variant.c \
+	driver_ddebug/dd_context.c \
+	driver_ddebug/dd_draw.c \
+	driver_ddebug/dd_pipe.h \
+	driver_ddebug/dd_public.h \
+	driver_ddebug/dd_screen.c \
+	driver_ddebug/dd_util.h \
+	driver_noop/noop_pipe.c \
+	driver_noop/noop_public.h \
+	driver_noop/noop_state.c \
+	driver_rbug/rbug_context.c \
+	driver_rbug/rbug_context.h \
+	driver_rbug/rbug_core.c \
+	driver_rbug/rbug_objects.c \
+	driver_rbug/rbug_objects.h \
+	driver_rbug/rbug_public.h \
+	driver_rbug/rbug_screen.c \
+	driver_rbug/rbug_screen.h \
+	driver_trace/tr_context.c \
+	driver_trace/tr_context.h \
+	driver_trace/tr_dump.c \
+	driver_trace/tr_dump_defines.h \
+	driver_trace/tr_dump.h \
+	driver_trace/tr_dump_state.c \
+	driver_trace/tr_dump_state.h \
+	driver_trace/tr_public.h \
+	driver_trace/tr_screen.c \
+	driver_trace/tr_screen.h \
+	driver_trace/tr_texture.c \
+	driver_trace/tr_texture.h \
 	hud/font.c \
 	hud/font.h \
 	hud/hud_context.c \
 	hud/hud_context.h \
 	hud/hud_cpu.c \
+	hud/hud_nic.c \
+	hud/hud_cpufreq.c \
+	hud/hud_diskstat.c \
+	hud/hud_sensors_temp.c \
 	hud/hud_driver_query.c \
 	hud/hud_fps.c \
 	hud/hud_private.h \
@@ -73,14 +106,10 @@ C_SOURCES := \
 	os/os_memory_debug.h \
 	os/os_memory_stdc.h \
 	os/os_memory.h \
-	os/os_misc.c \
-	os/os_misc.h \
 	os/os_mman.h \
 	os/os_process.c \
 	os/os_process.h \
 	os/os_thread.h \
-	os/os_time.c \
-	os/os_time.h \
 	pipebuffer/pb_buffer_fenced.c \
 	pipebuffer/pb_buffer_fenced.h \
 	pipebuffer/pb_buffer.h \
@@ -95,6 +124,8 @@ C_SOURCES := \
 	pipebuffer/pb_bufmgr_slab.c \
 	pipebuffer/pb_cache.c \
 	pipebuffer/pb_cache.h \
+	pipebuffer/pb_slab.c \
+	pipebuffer/pb_slab.h \
 	pipebuffer/pb_validate.c \
 	pipebuffer/pb_validate.h \
 	postprocess/filters.h \
@@ -141,8 +172,11 @@ C_SOURCES := \
 	tgsi/tgsi_exec.h \
 	tgsi/tgsi_emulate.c \
 	tgsi/tgsi_emulate.h \
+	tgsi/tgsi_from_mesa.c \
+	tgsi/tgsi_from_mesa.h \
 	tgsi/tgsi_info.c \
 	tgsi/tgsi_info.h \
+	tgsi/tgsi_info_opcodes.h \
 	tgsi/tgsi_iterate.c \
 	tgsi/tgsi_iterate.h \
 	tgsi/tgsi_lowering.c \
@@ -175,6 +209,8 @@ C_SOURCES := \
 	translate/translate_generic.c \
 	translate/translate_sse.c \
 	util/dbghelp.h \
+	util/u_async_debug.h \
+	util/u_async_debug.c \
 	util/u_bitcast.h \
 	util/u_bitmask.c \
 	util/u_bitmask.h \
@@ -186,12 +222,8 @@ C_SOURCES := \
 	util/u_box.h \
 	util/u_cache.c \
 	util/u_cache.h \
-	util/u_caps.c \
-	util/u_caps.h \
-	util/u_cpu_detect.c \
-	util/u_cpu_detect.h \
-	util/u_debug.c \
-	util/u_debug.h \
+	util/u_debug_gallium.h \
+	util/u_debug_gallium.c \
 	util/u_debug_describe.c \
 	util/u_debug_describe.h \
 	util/u_debug_flush.c \
@@ -217,10 +249,11 @@ C_SOURCES := \
 	util/u_dump_defines.c \
 	util/u_dump.h \
 	util/u_dump_state.c \
-	util/u_dynarray.h \
 	util/u_fifo.h \
 	util/u_format.c \
 	util/u_format.h \
+	util/u_format_bptc.c \
+	util/u_format_bptc.h \
 	util/u_format_etc.c \
 	util/u_format_etc.h \
 	util/u_format_latc.c \
@@ -244,21 +277,19 @@ C_SOURCES := \
 	util/u_half.h \
 	util/u_handle_table.c \
 	util/u_handle_table.h \
-	util/u_hash.c \
-	util/u_hash.h \
 	util/u_hash_table.c \
 	util/u_hash_table.h \
 	util/u_helpers.c \
 	util/u_helpers.h \
+	util/u_idalloc.c \
+	util/u_idalloc.h \
 	util/u_index_modify.c \
 	util/u_index_modify.h \
 	util/u_inlines.h \
-	util/u_keymap.c \
-	util/u_keymap.h \
 	util/u_linear.c \
 	util/u_linear.h \
-	util/u_math.c \
-	util/u_math.h \
+	util/u_log.c \
+	util/u_log.h \
 	util/u_memory.h \
 	util/u_mm.c \
 	util/u_mm.h \
@@ -267,13 +298,12 @@ C_SOURCES := \
 	util/u_pack_color.h \
 	util/u_pointer.h \
 	util/u_prim.h \
+	util/u_prim.c \
 	util/u_prim_restart.c \
 	util/u_prim_restart.h \
 	util/u_pstipple.c \
 	util/u_pstipple.h \
 	util/u_pwr8.h \
-	util/u_queue.c \
-	util/u_queue.h \
 	util/u_range.h \
 	util/u_rect.h \
 	util/u_resource.c \
@@ -282,11 +312,12 @@ C_SOURCES := \
 	util/u_ringbuffer.h \
 	util/u_sampler.c \
 	util/u_sampler.h \
+	util/u_screen.c \
+	util/u_screen.h \
 	util/u_simple_shaders.c \
 	util/u_simple_shaders.h \
 	util/u_split_prim.h \
 	util/u_sse.h \
-	util/u_string.h \
 	util/u_suballoc.c \
 	util/u_suballoc.h \
 	util/u_surface.c \
@@ -299,9 +330,13 @@ C_SOURCES := \
 	util/u_texture.h \
 	util/u_tile.c \
 	util/u_tile.h \
-	util/u_time.h \
 	util/u_transfer.c \
 	util/u_transfer.h \
+	util/u_transfer_helper.c \
+	util/u_transfer_helper.h \
+	util/u_threaded_context.c \
+	util/u_threaded_context.h \
+	util/u_threaded_context_calls.h \
 	util/u_upload_mgr.c \
 	util/u_upload_mgr.h \
 	util/u_vbuf.c \
@@ -344,17 +379,22 @@ VL_SOURCES := \
 	vl/vl_video_buffer.c \
 	vl/vl_video_buffer.h \
 	vl/vl_vlc.h \
-	vl/vl_winsys.h \
 	vl/vl_zscan.c \
-	vl/vl_zscan.h
+	vl/vl_zscan.h \
+	vl/vl_probs_table.h
 
 # XXX: Nuke this as our dri targets no longer depend on VL.
 VL_WINSYS_SOURCES := \
-	vl/vl_winsys_dri.c \
-	vl/vl_winsys_drm.c
+	vl/vl_winsys.h
+
+VL_WINSYS_DRI2_SOURCES := \
+	vl/vl_winsys_dri.c
 
 VL_WINSYS_DRI3_SOURCES := \
 	vl/vl_winsys_dri3.c
+
+VL_WINSYS_DRM_SOURCES := \
+	vl/vl_winsys_drm.c
 
 VL_STUB_SOURCES := \
 	vl/vl_stubs.c
@@ -431,3 +471,7 @@ GALLIVM_SOURCES := \
 	draw/draw_llvm_sample.c \
 	draw/draw_pt_fetch_shade_pipeline_llvm.c \
 	draw/draw_vs_llvm.c
+
+RENDERONLY_SOURCES := \
+	renderonly/renderonly.c \
+	renderonly/renderonly.h

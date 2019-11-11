@@ -47,6 +47,13 @@ is" without express or implied warranty.
 
 Bool xnestDoFullGeneration = True;
 
+#ifdef GLXEXT
+void
+GlxExtensionInit(void)
+{
+}
+#endif
+
 void
 InitOutput(ScreenInfo * screen_info, int argc, char *argv[])
 {
@@ -119,21 +126,11 @@ CloseInput(void)
     mieqFini();
 }
 
-/*
- * DDX - specific abort routine.  Called by AbortServer().
- */
-void
-AbortDDX(enum ExitCode error)
-{
-    xnestDoFullGeneration = True;
-    xnestCloseDisplay();
-}
-
-/* Called by GiveUp(). */
 void
 ddxGiveUp(enum ExitCode error)
 {
-    AbortDDX(error);
+    xnestDoFullGeneration = True;
+    xnestCloseDisplay();
 }
 
 #ifdef __APPLE__

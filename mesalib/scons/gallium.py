@@ -29,6 +29,7 @@ Frontend-tool for Gallium3D architecture.
 # SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #
 
+from __future__ import print_function
 
 import distutils.version
 import os
@@ -134,7 +135,9 @@ def check_cc(env, cc, expr, cpp_opt = '-E'):
     source.write('#if !(%s)\n#error\n#endif\n' % expr)
     source.close()
 
-    pipe = SCons.Action._subproc(env, [env['CC'], cpp_opt, source.name],
+    # sys.stderr.write('%r %s %s\n' % (env['CC'], cpp_opt, source.name));
+
+    pipe = SCons.Action._subproc(env, env.Split(env['CC']) + [cpp_opt, source.name],
                                  stdin = 'devnull',
                                  stderr = 'devnull',
                                  stdout = 'devnull')
@@ -145,6 +148,30 @@ def check_cc(env, cc, expr, cpp_opt = '-E'):
     sys.stdout.write(' %s\n' % ['no', 'yes'][int(bool(result))])
     return result
 
+def check_header(env, header):
+    '''Check if the header exist'''
+
+    conf = SCons.Script.Configure(env)
+    have_header = False
+
+    if conf.CheckHeader(header):
+        have_header = True
+
+    env = conf.Finish()
+    return have_header
+
+def check_functions(env, functions):
+    '''Check if all of the functions exist'''
+
+    conf = SCons.Script.Configure(env)
+    have_functions = True
+
+    for function in functions:
+        if not conf.CheckFunc(function):
+            have_functions = False
+
+    env = conf.Finish()
+    return have_functions
 
 def check_prog(env, prog):
     """Check whether this program exists."""
@@ -169,15 +196,15 @@ def generate(env):
     env.Tool(env['toolchain'])
 
     # Allow override compiler and specify additional flags from environment
-    if os.environ.has_key('CC'):
+    if 'CC' in os.environ:
         env['CC'] = os.environ['CC']
-    if os.environ.has_key('CFLAGS'):
+    if 'CFLAGS' in os.environ:
         env['CCFLAGS'] += SCons.Util.CLVar(os.environ['CFLAGS'])
-    if os.environ.has_key('CXX'):
+    if 'CXX' in os.environ:
         env['CXX'] = os.environ['CXX']
-    if os.environ.has_key('CXXFLAGS'):
+    if 'CXXFLAGS' in os.environ:
         env['CXXFLAGS'] += SCons.Util.CLVar(os.environ['CXXFLAGS'])
-    if os.environ.has_key('LDFLAGS'):
+    if 'LDFLAGS' in os.environ:
         env['LINKFLAGS'] += SCons.Util.CLVar(os.environ['LDFLAGS'])
 
     # Detect gcc/clang not by executable name, but through pre-defined macros
@@ -194,10 +221,6 @@ def generate(env):
     env['gcc'] = env['gcc_compat'] and not env['clang']
     env['suncc'] = env['platform'] == 'sunos' and os.path.basename(env['CC']) == 'cc'
     env['icc'] = 'icc' == os.path.basename(env['CC'])
-
-    if env['msvc'] and env['toolchain'] == 'default' and env['machine'] == 'x86_64':
-        # MSVC x64 support is broken in earlier versions of scons
-        env.EnsurePythonVersion(2, 0)
 
     # shortcuts
     machine = env['machine']
@@ -233,16 +256,16 @@ def generate(env):
     # Backwards compatability with the debug= profile= options
     if env['build'] == 'debug':
         if not env['debug']:
-            print 'scons: warning: debug option is deprecated and will be removed eventually; use instead'
-            print
-            print ' scons build=release'
-            print
+            print('scons: warning: debug option is deprecated and will be removed eventually; use instead')
+            print('')
+            print(' scons build=release')
+            print('')
             env['build'] = 'release'
         if env['profile']:
-            print 'scons: warning: profile option is deprecated and will be removed eventually; use instead'
-            print
-            print ' scons build=profile'
-            print
+            print('scons: warning: profile option is deprecated and will be removed eventually; use instead')
+            print('')
+            print(' scons build=profile')
+            print('')
             env['build'] = 'profile'
     if False:
         # Enforce SConscripts to use the new build variable
@@ -256,7 +279,7 @@ def generate(env):
         if env['build'] == 'profile':
             env['debug'] = False
             env['profile'] = True
-        if env['build'] in ('release', 'opt'):
+        if env['build'] == 'release':
             env['debug'] = False
             env['profile'] = False
 
@@ -276,7 +299,7 @@ def generate(env):
     env['build_dir'] = build_dir
     env.SConsignFile(os.path.join(build_dir, '.sconsign'))
     if 'SCONS_CACHE_DIR' in os.environ:
-        print 'scons: Using build cache in %s.' % (os.environ['SCONS_CACHE_DIR'],)
+        print('scons: Using build cache in %s.' % (os.environ['SCONS_CACHE_DIR'],))
         env.CacheDir(os.environ['SCONS_CACHE_DIR'])
     env['CONFIGUREDIR'] = os.path.join(build_dir, 'conf')
     env['CONFIGURELOG'] = os.path.join(os.path.abspath(build_dir), 'config.log')
@@ -291,8 +314,9 @@ def generate(env):
     # C preprocessor options
     cppdefines = []
     cppdefines += [
-        '__STDC_LIMIT_MACROS',
         '__STDC_CONSTANT_MACROS',
+        '__STDC_FORMAT_MACROS',
+        '__STDC_LIMIT_MACROS',
         'HAVE_NO_AUTOCONF',
     ]
     if env['build'] in ('debug', 'checked'):
@@ -301,8 +325,6 @@ def generate(env):
         cppdefines += ['NDEBUG']
     if env['build'] == 'profile':
         cppdefines += ['PROFILE']
-    if env['build'] in ('opt', 'profile'):
-        cppdefines += ['VMX86_STATS']
     if env['platform'] in ('posix', 'linux', 'freebsd', 'darwin'):
         cppdefines += [
             '_POSIX_SOURCE',
@@ -323,13 +345,18 @@ def generate(env):
                 'GLX_DIRECT_RENDERING',
                 'GLX_INDIRECT_RENDERING',
             ]
-        if env['platform'] in ('linux', 'freebsd'):
-            cppdefines += ['HAVE_ALIAS']
-        else:
-            cppdefines += ['GLX_ALIAS_UNSUPPORTED']
 
-        if env['platform'] in ('linux', 'darwin'):
+        if check_header(env, 'xlocale.h'):
             cppdefines += ['HAVE_XLOCALE_H']
+
+        if check_header(env, 'endian.h'):
+            cppdefines += ['HAVE_ENDIAN_H']
+
+        if check_functions(env, ['strtod_l', 'strtof_l']):
+            cppdefines += ['HAVE_STRTOD_L']
+
+        if check_functions(env, ['timespec_get']):
+            cppdefines += ['HAVE_TIMESPEC_GET']
 
     if platform == 'windows':
         cppdefines += [
@@ -360,10 +387,6 @@ def generate(env):
         cppdefines += ['PIPE_SUBSYSTEM_WINDOWS_USER']
     if env['embedded']:
         cppdefines += ['PIPE_SUBSYSTEM_EMBEDDED']
-    if env['texture_float']:
-        print 'warning: Floating-point textures enabled.'
-        print 'warning: Please consult docs/patents.txt with your lawyer before building Mesa.'
-        cppdefines += ['TEXTURE_FLOAT_ENABLED']
     env.Append(CPPDEFINES = cppdefines)
 
     # C compiler options
@@ -452,7 +475,7 @@ def generate(env):
             ccflags += [
                 '/O2', # optimize for speed
             ]
-        if env['build'] in ('release', 'opt'):
+        if env['build'] == 'release':
             if not env['clang']:
                 ccflags += [
                     '/GL', # enable whole program optimization
@@ -563,7 +586,7 @@ def generate(env):
             shlinkflags += ['-Wl,--enable-stdcall-fixup']
             #shlinkflags += ['-Wl,--kill-at']
     if msvc:
-        if env['build'] in ('release', 'opt') and not env['clang']:
+        if env['build'] == 'release' and not env['clang']:
             # enable Link-time Code Generation
             linkflags += ['/LTCG']
             env.Append(ARFLAGS = ['/LTCG'])
@@ -648,11 +671,22 @@ def generate(env):
     env.AddMethod(msvc2013_compat, 'MSVC2013Compat')
     env.AddMethod(unit_test, 'UnitTest')
 
-    env.PkgCheckModules('X11', ['x11', 'xext', 'xdamage', 'xfixes', 'glproto >= 1.4.13'])
+    env.PkgCheckModules('X11', ['x11', 'xext', 'xdamage >= 1.1', 'xfixes', 'glproto >= 1.4.13', 'dri2proto >= 2.8'])
     env.PkgCheckModules('XCB', ['x11-xcb', 'xcb-glx >= 1.8.1', 'xcb-dri2 >= 1.8'])
     env.PkgCheckModules('XF86VIDMODE', ['xxf86vm'])
-    env.PkgCheckModules('DRM', ['libdrm >= 2.4.38'])
-    env.PkgCheckModules('UDEV', ['libudev >= 151'])
+    env.PkgCheckModules('DRM', ['libdrm >= 2.4.75'])
+
+    if not os.path.exists("src/util/format_srgb.c"):
+        print("Checking for Python Mako module (>= 0.8.0)... ", end='')
+        try:
+            import mako
+        except ImportError:
+            print("no")
+            exit(1)
+        if distutils.version.StrictVersion(mako.__version__) < distutils.version.StrictVersion('0.8.0'):
+            print("no")
+            exit(1)
+        print("yes")
 
     if env['x11']:
         env.Append(CPPPATH = env['X11_CPPPATH'])

@@ -7,6 +7,7 @@
  * testdata/bignum.py.
  */
 
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
@@ -31,7 +32,12 @@ int random_byte(void)
     return 0;
 }
 
+void queue_idempotent_callback(IdempotentCallback *ic) { assert(0); }
+
 #define fromxdigit(c) ( (c)>'9' ? ((c)&0xDF) - 'A' + 10 : (c) - '0' )
+
+/* For Unix in particular, but harmless if this main() is reused elsewhere */
+const bool buildinfo_gtk_relevant = false;
 
 int main(int argc, char **argv)
 {
@@ -55,7 +61,7 @@ int main(int argc, char **argv)
 
         while (*bufp && !isspace((unsigned char)*bufp))
             bufp++;
-        if (bufp)
+        if (*bufp)
             *bufp++ = '\0';
 
         while (*bufp) {
@@ -82,8 +88,6 @@ int main(int argc, char **argv)
                 val = val * 16 + fromxdigit(start[i+1]);
                 *q++ = val;
             }
-
-            ptrs[ptrnum] = q;
         }
 
         if (!strcmp(buf, "mul")) {
@@ -197,7 +201,7 @@ int main(int argc, char **argv)
             freebn(answer);
         } else if (!strcmp(buf, "divmod")) {
             Bignum n, d, expect_q, expect_r, answer_q, answer_r;
-            int fail;
+            bool fail;
 
             if (ptrnum != 4) {
                 printf("%d: divmod with %d parameters, expected 4\n", line, ptrnum);
@@ -211,7 +215,7 @@ int main(int argc, char **argv)
             answer_q = bigdiv(n, d);
             answer_r = bigmod(n, d);
 
-            fail = FALSE;
+            fail = false;
             if (bignum_cmp(expect_q, answer_q) != 0) {
                 char *as = bignum_decimal(n);
                 char *bs = bignum_decimal(d);
@@ -220,7 +224,7 @@ int main(int argc, char **argv)
 
                 printf("%d: fail: %s / %s gave %s expected %s\n",
                        line, as, bs, cs, ds);
-                fail = TRUE;
+                fail = true;
 
                 sfree(as);
                 sfree(bs);
@@ -235,7 +239,7 @@ int main(int argc, char **argv)
 
                 printf("%d: fail: %s mod %s gave %s expected %s\n",
                        line, as, bs, cs, ds);
-                fail = TRUE;
+                fail = true;
 
                 sfree(as);
                 sfree(bs);

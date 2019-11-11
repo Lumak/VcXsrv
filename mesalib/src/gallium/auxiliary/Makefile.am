@@ -8,10 +8,12 @@ AM_CFLAGS = \
 	-I$(top_builddir)/src/compiler/nir \
 	-I$(top_srcdir)/src/gallium/auxiliary/util \
 	$(GALLIUM_CFLAGS) \
+	$(LIBUNWIND_CFLAGS) \
 	$(VISIBILITY_CFLAGS) \
 	$(MSVC2013_COMPAT_CFLAGS)
 
 AM_CXXFLAGS = \
+	$(GALLIUM_CFLAGS) \
 	$(VISIBILITY_CXXFLAGS) \
 	$(MSVC2013_COMPAT_CXXFLAGS)
 
@@ -20,13 +22,30 @@ libgallium_la_SOURCES = \
 	$(NIR_SOURCES) \
 	$(GENERATED_SOURCES)
 
-if HAVE_MESA_LLVM
+if HAVE_PLATFORM_ANDROID
+# Android's libbacktrace headers required C++11, but the Android toolchain (at
+# least in the Chrome OS SDK) does not enable C++11 by default.
+AM_CXXFLAGS += $(CXX11_CXXFLAGS)
+
+libgallium_la_SOURCES += util/u_debug_stack_android.cpp
+endif
+
+if HAVE_LIBDRM
+
+AM_CFLAGS += \
+	$(LIBDRM_CFLAGS)
+
+libgallium_la_SOURCES += \
+	$(RENDERONLY_SOURCES)
+
+endif
+
+if HAVE_GALLIUM_LLVM
 
 AM_CFLAGS += \
 	$(LLVM_CFLAGS)
 
 AM_CXXFLAGS += \
-	$(GALLIUM_CFLAGS) \
 	$(LLVM_CXXFLAGS)
 
 libgallium_la_SOURCES += \
@@ -35,7 +54,7 @@ libgallium_la_SOURCES += \
 endif
 
 MKDIR_GEN = $(AM_V_at)$(MKDIR_P) $(@D)
-PYTHON_GEN =  $(AM_V_GEN)$(PYTHON2) $(PYTHON_FLAGS)
+PYTHON_GEN =  $(AM_V_GEN)$(PYTHON) $(PYTHON_FLAGS)
 
 indices/u_indices_gen.c: indices/u_indices_gen.py
 	$(MKDIR_GEN)
@@ -61,6 +80,7 @@ if NEED_GALLIUM_VL
 COMMON_VL_CFLAGS = \
 	$(AM_CFLAGS) \
 	$(VL_CFLAGS) \
+	$(XCB_DRI3_CFLAGS) \
 	$(DRI2PROTO_CFLAGS) \
 	$(LIBDRM_CFLAGS)
 
@@ -76,25 +96,29 @@ if NEED_GALLIUM_VL_WINSYS
 
 noinst_LTLIBRARIES += libgalliumvlwinsys.la
 
-libgalliumvlwinsys_la_CFLAGS = \
-	$(COMMON_VL_CFLAGS)
+libgalliumvlwinsys_la_CFLAGS = $(COMMON_VL_CFLAGS)
+libgalliumvlwinsys_la_SOURCES = $(VL_WINSYS_SOURCES)
 
-libgalliumvlwinsys_la_SOURCES = \
-	$(VL_WINSYS_SOURCES)
+if HAVE_PLATFORM_X11
+libgalliumvlwinsys_la_SOURCES += $(VL_WINSYS_DRI2_SOURCES)
 
 if HAVE_DRI3
-
-libgalliumvlwinsys_la_SOURCES += \
-	$(VL_WINSYS_DRI3_SOURCES)
-
+libgalliumvlwinsys_la_SOURCES += $(VL_WINSYS_DRI3_SOURCES)
+endif
 endif
 
+if HAVE_PLATFORM_DRM
+libgalliumvlwinsys_la_SOURCES += $(VL_WINSYS_DRM_SOURCES)
 endif
 
-endif
+endif # NEED_GALLIUM_VL_WINSYS
+endif # NEED_GALLIUM_VL
 
 EXTRA_DIST = \
 	SConscript \
+	driver_rbug/README \
+	driver_trace/README \
+	driver_trace/trace.xsl \
 	indices/u_indices.c \
 	indices/u_unfilled_indices.c \
 	indices/u_indices_gen.py \
@@ -102,7 +126,9 @@ EXTRA_DIST = \
 	postprocess/ADDING \
 	rbug/README \
 	target-helpers \
+	util/u_debug_stack_android.cpp \
 	util/u_format.csv \
 	util/u_format_pack.py \
 	util/u_format_parse.py \
-	util/u_format_table.py
+	util/u_format_table.py \
+	meson.build

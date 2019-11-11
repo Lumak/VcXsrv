@@ -115,11 +115,11 @@ remove_phis_block(nir_block *block, nir_builder *b)
       assert(def != NULL);
 
       if (mov) {
-         /* If the sources were all mov's from the same source with the same
+         /* If the sources were all movs from the same source with the same
           * swizzle, then we can't just pick a random move because it may not
           * dominate the phi node. Instead, we need to emit our own move after
           * the phi which uses the shared source, and rewrite uses of the phi
-          * to use the move instead. This is ok, because while the mov's may
+          * to use the move instead. This is ok, because while the movs may
           * not all dominate the phi node, their shared source does.
           */
 
@@ -139,8 +139,8 @@ remove_phis_block(nir_block *block, nir_builder *b)
    return progress;
 }
 
-static bool
-remove_phis_impl(nir_function_impl *impl)
+bool
+nir_opt_remove_phis_impl(nir_function_impl *impl)
 {
    bool progress = false;
    nir_builder bld;
@@ -165,7 +165,7 @@ nir_opt_remove_phis(nir_shader *shader)
 
    nir_foreach_function(function, shader)
       if (function->impl)
-         progress = remove_phis_impl(function->impl) || progress;
+         progress = nir_opt_remove_phis_impl(function->impl) || progress;
 
    return progress;
 }

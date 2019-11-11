@@ -216,6 +216,8 @@ _legal_parameters(struct gl_context *ctx, GLenum target, GLenum internalformat,
    case GL_CLEAR_BUFFER:
    case GL_TEXTURE_VIEW:
    case GL_VIEW_COMPATIBILITY_CLASS:
+   case GL_NUM_TILING_TYPES_EXT:
+   case GL_TILING_TYPES_EXT:
       /* The ARB_internalformat_query spec says:
        *
        *     "If the <pname> parameter to GetInternalformativ is not SAMPLES
@@ -284,6 +286,7 @@ _set_default_response(GLenum pname, GLint buffer[16])
     */
    switch(pname) {
    case GL_SAMPLES:
+   case GL_TILING_TYPES_EXT:
       break;
 
    case GL_MAX_COMBINED_DIMENSIONS:
@@ -309,6 +312,7 @@ _set_default_response(GLenum pname, GLint buffer[16])
    case GL_TEXTURE_COMPRESSED_BLOCK_WIDTH:
    case GL_TEXTURE_COMPRESSED_BLOCK_HEIGHT:
    case GL_TEXTURE_COMPRESSED_BLOCK_SIZE:
+   case GL_NUM_TILING_TYPES_EXT:
       buffer[0] = 0;
       break;
 
@@ -388,14 +392,12 @@ _is_target_supported(struct gl_context *ctx, GLenum target)
     *     implementation the "unsupported" answer should be given.
     *     This is not an error."
     *
-    * For OpenGL ES, queries can only be used with GL_RENDERBUFFER or MS.
+    * Note that legality of targets has already been verified.
     */
    switch(target){
    case GL_TEXTURE_1D:
    case GL_TEXTURE_2D:
    case GL_TEXTURE_3D:
-      if (!_mesa_is_desktop_gl(ctx))
-         return false;
       break;
 
    case GL_TEXTURE_1D_ARRAY:
@@ -499,8 +501,7 @@ _is_resource_supported(struct gl_context *ctx, GLenum target,
 
       /* additional checks for compressed textures */
       if (_mesa_is_compressed_format(ctx, internalformat) &&
-          (!_mesa_target_can_be_compressed(ctx, target, internalformat, NULL) ||
-           _mesa_format_no_online_compression(ctx, internalformat)))
+          !_mesa_target_can_be_compressed(ctx, target, internalformat, NULL))
          return false;
 
       break;
@@ -556,15 +557,29 @@ _is_internalformat_supported(struct gl_context *ctx, GLenum target,
     *         implementation accepts it for any texture specification commands, and
     *         - unsized or base internal format, if the implementation accepts
     *         it for texture or image specification.
+    *
+    * But also:
+    * "If the particualar <target> and <internalformat> combination do not make
+    * sense, or if a particular type of <target> is not supported by the
+    * implementation the "unsupported" answer should be given. This is not an
+    * error.
     */
    GLint buffer[1];
 
-   /* At this point an internalformat is valid if it is valid as a texture or
-    * as a renderbuffer format. The checks are different because those methods
-    * return different values when passing non supported internalformats */
-   if (_mesa_base_tex_format(ctx, internalformat) < 0 &&
-       _mesa_base_fbo_format(ctx, internalformat) == 0)
-      return false;
+   if (target == GL_RENDERBUFFER) {
+      if (_mesa_base_fbo_format(ctx, internalformat) == 0) {
+         return false;
+      }
+   } else if (target == GL_TEXTURE_BUFFER) {
+      if (_mesa_validate_texbuffer_format(ctx, internalformat) ==
+          MESA_FORMAT_NONE) {
+         return false;
+      }
+   } else {
+      if (_mesa_base_tex_format(ctx, internalformat) < 0) {
+         return false;
+      }
+   }
 
    /* Let the driver have the final word */
    ctx->Driver.QueryInternalFormat(ctx, target, internalformat,
@@ -698,7 +713,20 @@ _mesa_query_internal_format_default(struct gl_context *ctx, GLenum target,
    case GL_FRAMEBUFFER_RENDERABLE_LAYERED:
    case GL_FRAMEBUFFER_BLEND:
    case GL_FILTER:
+      /*
+       * TODO seems a tad optimistic just saying yes to everything here.
+       * Even for combinations which make no sense...
+       * And things like TESS_CONTROL_TEXTURE should definitely default to
+       * NONE if the driver doesn't even support tessellation...
+       */
       params[0] = GL_FULL_SUPPORT;
+      break;
+   case GL_NUM_TILING_TYPES_EXT:
+      params[0] = 2;
+      break;
+   case GL_TILING_TYPES_EXT:
+      params[0] = GL_OPTIMAL_TILING_EXT;
+      params[1] = GL_LINEAR_TILING_EXT;
       break;
 
    default:
@@ -718,8 +746,8 @@ _mesa_query_internal_format_default(struct gl_context *ctx, GLenum target,
  * arb_internalformat_query2 spec.
  */
 static GLenum
-equivalentSizePname(GLenum target,
-                    GLenum pname)
+_equivalent_size_pname(GLenum target,
+                       GLenum pname)
 {
    switch (target) {
    case GL_TEXTURE_1D:
@@ -763,7 +791,7 @@ equivalentSizePname(GLenum target,
  * per-se, so we can't just call _mesa_get_texture_dimension directly.
  */
 static GLint
-get_target_dimensions(GLenum target)
+_get_target_dimensions(GLenum target)
 {
    switch(target) {
    case GL_TEXTURE_BUFFER:
@@ -788,7 +816,7 @@ get_target_dimensions(GLenum target)
  *  <skip>."
  */
 static GLint
-get_min_dimensions(GLenum pname)
+_get_min_dimensions(GLenum pname)
 {
    switch(pname) {
    case GL_MAX_WIDTH:
@@ -807,7 +835,7 @@ get_min_dimensions(GLenum pname)
  * dimensions.
  */
 static bool
-is_multisample_target(GLenum target)
+_is_multisample_target(GLenum target)
 {
    switch(target) {
    case GL_TEXTURE_2D_MULTISAMPLE:
@@ -931,9 +959,6 @@ _mesa_GetInternalformativ(GLenum target, GLenum internalformat, GLenum pname,
       mesa_format texformat;
 
       if (target != GL_RENDERBUFFER) {
-         if (!_mesa_legal_get_tex_level_parameter_target(ctx, target, true))
-            goto end;
-
          baseformat = _mesa_base_tex_format(ctx, internalformat);
       } else {
          baseformat = _mesa_base_fbo_format(ctx, internalformat);
@@ -954,10 +979,7 @@ _mesa_GetInternalformativ(GLenum target, GLenum internalformat, GLenum pname,
        * and glGetRenderbufferParameteriv functions.
        */
       if (pname == GL_INTERNALFORMAT_SHARED_SIZE) {
-         if (_mesa_has_EXT_texture_shared_exponent(ctx) &&
-             target != GL_TEXTURE_BUFFER &&
-             target != GL_RENDERBUFFER &&
-             texformat == MESA_FORMAT_R9G9B9E5_FLOAT) {
+         if (texformat == MESA_FORMAT_R9G9B9E5_FLOAT) {
             buffer[0] = 5;
          }
          goto end;
@@ -1016,12 +1038,12 @@ _mesa_GetInternalformativ(GLenum target, GLenum internalformat, GLenum pname,
        * "If the resource does not have at least two dimensions, or if the
        * resource is unsupported, zero is returned."
        */
-      dimensions = get_target_dimensions(target);
-      min_dimensions = get_min_dimensions(pname);
+      dimensions = _get_target_dimensions(target);
+      min_dimensions = _get_min_dimensions(pname);
       if (dimensions < min_dimensions)
          goto end;
 
-      get_pname = equivalentSizePname(target, pname);
+      get_pname = _equivalent_size_pname(target, pname);
       if (get_pname == 0)
          goto end;
 
@@ -1055,7 +1077,7 @@ _mesa_GetInternalformativ(GLenum target, GLenum internalformat, GLenum pname,
        * returned as MAX_HEIGHT or MAX_DEPTH */
       for (i = 0; i < 4; i++) {
          if (max_dimensions_pnames[i] == GL_SAMPLES &&
-             !is_multisample_target(target))
+             !_is_multisample_target(target))
             continue;
 
          _mesa_GetInternalformativ(target, internalformat,
@@ -1419,7 +1441,13 @@ _mesa_GetInternalformativ(GLenum target, GLenum internalformat, GLenum pname,
       if (!_mesa_has_ARB_shader_image_load_store(ctx))
          goto end;
 
-      if (!_mesa_legal_get_tex_level_parameter_target(ctx, target, true))
+      /* As pointed by the spec quote below, this pname query should return
+       * the same value that GetTexParameter. So if the target is not valid
+       * for GetTexParameter we return the unsupported value. The check below
+       * is the same target check used by GetTexParameter.
+       */
+      int targetIndex = _mesa_tex_target_to_index(ctx, target);
+      if (targetIndex < 0 || targetIndex == TEXTURE_BUFFER_INDEX)
          goto end;
 
       /* From spec: "Equivalent to calling GetTexParameter with <value> set
@@ -1519,6 +1547,12 @@ _mesa_GetInternalformativ(GLenum target, GLenum internalformat, GLenum pname,
       }
       break;
 
+   case GL_NUM_TILING_TYPES_EXT:
+   case GL_TILING_TYPES_EXT:
+      ctx->Driver.QueryInternalFormat(ctx, target, internalformat, pname,
+                                      buffer);
+      break;
+
    default:
       unreachable("bad param");
    }
@@ -1564,7 +1598,8 @@ _mesa_GetInternalformati64v(GLenum target, GLenum internalformat,
     * no pname can return a negative value, we fill params32 with negative
     * values as reference values, that can be used to know what copy-back to
     * params */
-   memset(params32, -1, 16);
+   for (i = 0; i < realSize; i++)
+      params32[i] = -1;
 
    /* For GL_MAX_COMBINED_DIMENSIONS we need to get back 2 32-bit integers,
     * and at the same time we only need 2. So for that pname, we call the

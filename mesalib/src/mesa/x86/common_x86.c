@@ -35,9 +35,6 @@
  */
 
 /* XXX these includes should probably go into imports.h or glheader.h */
-#if defined(USE_SSE_ASM) && defined(__linux__)
-#include <linux/version.h>
-#endif
 #if defined(USE_SSE_ASM) && defined(__FreeBSD__)
 #include <sys/types.h>
 #include <sys/sysctl.h>
@@ -57,6 +54,7 @@
 #endif
 #endif
 
+#include "main/errors.h"
 #include "main/imports.h"
 #include "common_x86_asm.h"
 

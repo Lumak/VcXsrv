@@ -5,7 +5,7 @@ symbols_DATA = \
 af al am apl \
 ara at au az \
 ba bd be \
-bg bn br brai \
+bg br brai \
 bt bw by \
 ca cd ch \
 cm cn cz \
@@ -26,12 +26,12 @@ ma mao md me \
 mk ml mm \
 mn mt mv my \
 ng nl no np \
-pc ph pk pl pt \
+parens pc ph pk pl pt \
 ro rs ru \
 se si sk sn \
 sy th \
 terminate tg \
-tj tm tr tw tz \
+tj tm tr trans tw tz \
 ua us uz vn \
 za \
 altwin capslock compose ctrl empty eurosign rupeesign group inet \

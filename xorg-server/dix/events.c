@@ -681,15 +681,15 @@ ConfineToShape(DeviceIntPtr pDev, RegionPtr shape, int *px, int *py)
         x += incx;
         if (x >= box.x2) {
             incx = -1;
-            x = *px - 1;
+            x = min(box.x2,*px) - 1;
         }
         else if (x < box.x1) {
             incx = 1;
-            x = *px;
+            x = max(box.x1,*px);
             y += incy;
             if (y >= box.y2) {
                 incy = -1;
-                y = *py - 1;
+                y = min(box.y2,*py) - 1;
             }
             else if (y < box.y1)
                 return;         /* should never get here! */
@@ -885,6 +885,8 @@ ConfineCursorToWindow(DeviceIntPtr pDev, WindowPtr pWin, Bool generateEvents,
         SyntheticMotion(pDev, pSprite->hot.x, pSprite->hot.y);
     }
     else {
+        ScreenPtr pScreen = pWin->drawable.pScreen;
+
 #ifdef PANORAMIX
         if (!noPanoramiXExtension) {
             XineramaConfineCursorToWindow(pDev, pWin, generateEvents);
@@ -896,6 +898,9 @@ ConfineCursorToWindow(DeviceIntPtr pDev, WindowPtr pWin, Bool generateEvents,
             : NullRegion;
         CheckPhysLimits(pDev, pSprite->current, generateEvents,
                         confineToScreen, pWin->drawable.pScreen);
+
+        if (*pScreen->CursorConfinedTo)
+            (*pScreen->CursorConfinedTo) (pDev, pScreen, pWin);
     }
 }
 
@@ -1571,7 +1576,7 @@ DeactivatePointerGrab(DeviceIntPtr mouse)
                emulate a ButtonRelease here. So pretend the listener
                already has the end event */
             if (grab->grabtype == CORE || grab->grabtype == XI ||
-                    !xi2mask_isset(mouse->deviceGrab.grab->xi2mask, mouse, XI_TouchBegin)) {
+                    !xi2mask_isset(grab->xi2mask, mouse, XI_TouchBegin)) {
                 mode = XIAcceptTouch;
                 /* NOTE: we set the state here, but
                  * ProcessTouchOwnershipEvent() will still call
@@ -3574,7 +3579,7 @@ ProcWarpPointer(ClientPtr client)
              winX + stuff->srcX + (int) stuff->srcWidth < x) ||
             (stuff->srcHeight != 0 &&
              winY + stuff->srcY + (int) stuff->srcHeight < y) ||
-            !PointInWindowIsVisible(source, x, y))
+            (source->parent && !PointInWindowIsVisible(source, x, y)))
             return Success;
     }
     if (dest) {
@@ -3613,6 +3618,9 @@ ProcWarpPointer(ClientPtr client)
     else if (!PointerConfinedToScreen(dev)) {
         NewCurrentScreen(dev, newScreen, x, y);
     }
+    if (*newScreen->CursorWarpedTo)
+        (*newScreen->CursorWarpedTo) (dev, newScreen, client,
+                                      dest, pSprite, x, y);
     return Success;
 }
 
@@ -5360,6 +5368,12 @@ ProcSendEvent(ClientPtr client)
            stuff->event.u.u.type < LASTEvent) ||
           (stuff->event.u.u.type >= EXTENSION_EVENT_BASE &&
            stuff->event.u.u.type < (unsigned) lastEvent))) {
+        client->errorValue = stuff->event.u.u.type;
+        return BadValue;
+    }
+    /* Generic events can have variable size, but SendEvent request holds
+       exactly 32B of event data. */
+    if (stuff->event.u.u.type == GenericEvent) {
         client->errorValue = stuff->event.u.u.type;
         return BadValue;
     }

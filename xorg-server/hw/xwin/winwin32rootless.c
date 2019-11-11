@@ -265,7 +265,7 @@ winMWExtWMCreateFrame(RootlessWindowPtr pFrame, ScreenPtr pScreen,
     wc.style = CS_HREDRAW | CS_VREDRAW;
     wc.lpfnWndProc = winMWExtWMWindowProc;
     wc.cbClsExtra = 0;
-    wc.cbWndExtra = 0;
+    wc.cbWndExtra = WND_EXTRABYTES;
     wc.hInstance = g_hInstance;
     wc.hIcon = hIcon;
     wc.hIconSm = hIconSmall;
@@ -286,7 +286,7 @@ winMWExtWMCreateFrame(RootlessWindowPtr pFrame, ScreenPtr pScreen,
                                        pFrame->height,  /* Bottom edge */
                                        (HWND) NULL,     /* No parent or owner window */
                                        (HMENU) NULL,    /* No menu */
-                                       GetModuleHandle(NULL),   /* Instance handle */
+                                       g_hInstance,   /* Instance handle */
                                        pRLWinPriv);     /* ScreenPrivates */
     if (pRLWinPriv->hWnd == NULL) {
         ErrorF("winMWExtWMCreateFrame - CreateWindowExA () failed: %d\n",

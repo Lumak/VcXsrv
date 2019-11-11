@@ -42,20 +42,92 @@ Equipment Corporation.
 #include <X11/extensions/dpmsproto.h>
 #include "dpmsproc.h"
 #include "extinit.h"
+#include "scrnintstr.h"
+#include "windowstr.h"
+
+CARD16 DPMSPowerLevel = 0;
+Bool DPMSDisabledSwitch = FALSE;
+CARD32 DPMSStandbyTime = -1;
+CARD32 DPMSSuspendTime = -1;
+CARD32 DPMSOffTime = -1;
+Bool DPMSEnabled;
+
+Bool
+DPMSSupported(void)
+{
+    int i;
+
+    /* For each screen, check if DPMS is supported */
+    for (i = 0; i < screenInfo.numScreens; i++)
+        if (screenInfo.screens[i]->DPMS != NULL)
+            return TRUE;
+
+    for (i = 0; i < screenInfo.numGPUScreens; i++)
+        if (screenInfo.gpuscreens[i]->DPMS != NULL)
+            return TRUE;
+
+    return FALSE;
+}
+
+static Bool
+isUnblank(int mode)
+{
+    switch (mode) {
+    case SCREEN_SAVER_OFF:
+    case SCREEN_SAVER_FORCER:
+        return TRUE;
+    case SCREEN_SAVER_ON:
+    case SCREEN_SAVER_CYCLE:
+        return FALSE;
+    default:
+        return TRUE;
+    }
+}
+
+int
+DPMSSet(ClientPtr client, int level)
+{
+    int rc, i;
+
+    DPMSPowerLevel = level;
+
+    if (level != DPMSModeOn) {
+        if (isUnblank(screenIsSaved)) {
+            rc = dixSaveScreens(client, SCREEN_SAVER_FORCER, ScreenSaverActive);
+            if (rc != Success)
+                return rc;
+        }
+    } else if (!isUnblank(screenIsSaved)) {
+        rc = dixSaveScreens(client, SCREEN_SAVER_OFF, ScreenSaverReset);
+        if (rc != Success)
+            return rc;
+    }
+
+    for (i = 0; i < screenInfo.numScreens; i++)
+        if (screenInfo.screens[i]->DPMS != NULL)
+            screenInfo.screens[i]->DPMS(screenInfo.screens[i], level);
+
+    for (i = 0; i < screenInfo.numGPUScreens; i++)
+        if (screenInfo.gpuscreens[i]->DPMS != NULL)
+            screenInfo.gpuscreens[i]->DPMS(screenInfo.gpuscreens[i], level);
+
+    return Success;
+}
 
 static int
 ProcDPMSGetVersion(ClientPtr client)
 {
     /* REQUEST(xDPMSGetVersionReq); */
-    xDPMSGetVersionReply rep;
+    xDPMSGetVersionReply rep = {
+        .type = X_Reply,
+        .sequenceNumber = client->sequence,
+        .length = 0,
+        .majorVersion = DPMSMajorVersion,
+        .minorVersion = DPMSMinorVersion
+    };
 
     REQUEST_SIZE_MATCH(xDPMSGetVersionReq);
 
-    rep.type = X_Reply;
-    rep.sequenceNumber = client->sequence;
-    rep.length = 0;
-    rep.majorVersion = DPMSMajorVersion;
-    rep.minorVersion = DPMSMinorVersion;
     if (client->swapped) {
         swaps(&rep.sequenceNumber);
         swaps(&rep.majorVersion);
@@ -69,14 +141,14 @@ static int
 ProcDPMSCapable(ClientPtr client)
 {
     /* REQUEST(xDPMSCapableReq); */
-    xDPMSCapableReply rep;
+    xDPMSCapableReply rep = {
+        .type = X_Reply,
+        .sequenceNumber = client->sequence,
+        .length = 0,
+        .capable = TRUE
+    };
 
     REQUEST_SIZE_MATCH(xDPMSCapableReq);
-
-    rep.type = X_Reply;
-    rep.sequenceNumber = client->sequence;
-    rep.length = 0;
-    rep.capable = DPMSCapableFlag;
 
     if (client->swapped) {
         swaps(&rep.sequenceNumber);
@@ -89,16 +161,16 @@ static int
 ProcDPMSGetTimeouts(ClientPtr client)
 {
     /* REQUEST(xDPMSGetTimeoutsReq); */
-    xDPMSGetTimeoutsReply rep;
+    xDPMSGetTimeoutsReply rep = {
+        .type = X_Reply,
+        .sequenceNumber = client->sequence,
+        .length = 0,
+        .standby = DPMSStandbyTime / MILLI_PER_SECOND,
+        .suspend = DPMSSuspendTime / MILLI_PER_SECOND,
+        .off = DPMSOffTime / MILLI_PER_SECOND
+    };
 
     REQUEST_SIZE_MATCH(xDPMSGetTimeoutsReq);
-
-    rep.type = X_Reply;
-    rep.sequenceNumber = client->sequence;
-    rep.length = 0;
-    rep.standby = DPMSStandbyTime / MILLI_PER_SECOND;
-    rep.suspend = DPMSSuspendTime / MILLI_PER_SECOND;
-    rep.off = DPMSOffTime / MILLI_PER_SECOND;
 
     if (client->swapped) {
         swaps(&rep.sequenceNumber);
@@ -141,11 +213,9 @@ ProcDPMSEnable(ClientPtr client)
 
     REQUEST_SIZE_MATCH(xDPMSEnableReq);
 
-    if (DPMSCapableFlag) {
-        DPMSEnabled = TRUE;
-        if (!was_enabled)
-            SetScreenSaverTimer();
-    }
+    DPMSEnabled = TRUE;
+    if (!was_enabled)
+        SetScreenSaverTimer();
 
     return Success;
 }
@@ -190,15 +260,15 @@ static int
 ProcDPMSInfo(ClientPtr client)
 {
     /* REQUEST(xDPMSInfoReq); */
-    xDPMSInfoReply rep;
+    xDPMSInfoReply rep = {
+        .type = X_Reply,
+        .sequenceNumber = client->sequence,
+        .length = 0,
+        .power_level = DPMSPowerLevel,
+        .state = DPMSEnabled
+    };
 
     REQUEST_SIZE_MATCH(xDPMSInfoReq);
-
-    rep.type = X_Reply;
-    rep.sequenceNumber = client->sequence;
-    rep.length = 0;
-    rep.power_level = DPMSPowerLevel;
-    rep.state = DPMSEnabled;
 
     if (client->swapped) {
         swaps(&rep.sequenceNumber);
@@ -235,7 +305,7 @@ ProcDPMSDispatch(ClientPtr client)
     }
 }
 
-static int
+static int _X_COLD
 SProcDPMSGetVersion(ClientPtr client)
 {
     REQUEST(xDPMSGetVersionReq);
@@ -247,7 +317,7 @@ SProcDPMSGetVersion(ClientPtr client)
     return ProcDPMSGetVersion(client);
 }
 
-static int
+static int _X_COLD
 SProcDPMSCapable(ClientPtr client)
 {
     REQUEST(xDPMSCapableReq);
@@ -258,7 +328,7 @@ SProcDPMSCapable(ClientPtr client)
     return ProcDPMSCapable(client);
 }
 
-static int
+static int _X_COLD
 SProcDPMSGetTimeouts(ClientPtr client)
 {
     REQUEST(xDPMSGetTimeoutsReq);
@@ -269,7 +339,7 @@ SProcDPMSGetTimeouts(ClientPtr client)
     return ProcDPMSGetTimeouts(client);
 }
 
-static int
+static int _X_COLD
 SProcDPMSSetTimeouts(ClientPtr client)
 {
     REQUEST(xDPMSSetTimeoutsReq);
@@ -283,7 +353,7 @@ SProcDPMSSetTimeouts(ClientPtr client)
     return ProcDPMSSetTimeouts(client);
 }
 
-static int
+static int _X_COLD
 SProcDPMSEnable(ClientPtr client)
 {
     REQUEST(xDPMSEnableReq);
@@ -294,7 +364,7 @@ SProcDPMSEnable(ClientPtr client)
     return ProcDPMSEnable(client);
 }
 
-static int
+static int _X_COLD
 SProcDPMSDisable(ClientPtr client)
 {
     REQUEST(xDPMSDisableReq);
@@ -305,7 +375,7 @@ SProcDPMSDisable(ClientPtr client)
     return ProcDPMSDisable(client);
 }
 
-static int
+static int _X_COLD
 SProcDPMSForceLevel(ClientPtr client)
 {
     REQUEST(xDPMSForceLevelReq);
@@ -318,7 +388,7 @@ SProcDPMSForceLevel(ClientPtr client)
     return ProcDPMSForceLevel(client);
 }
 
-static int
+static int _X_COLD
 SProcDPMSInfo(ClientPtr client)
 {
     REQUEST(xDPMSInfoReq);
@@ -329,7 +399,7 @@ SProcDPMSInfo(ClientPtr client)
     return ProcDPMSInfo(client);
 }
 
-static int
+static int _X_COLD
 SProcDPMSDispatch(ClientPtr client)
 {
     REQUEST(xReq);
@@ -355,10 +425,29 @@ SProcDPMSDispatch(ClientPtr client)
     }
 }
 
+static void
+DPMSCloseDownExtension(ExtensionEntry *e)
+{
+    DPMSSet(serverClient, DPMSModeOn);
+}
+
 void
 DPMSExtensionInit(void)
 {
-    AddExtension(DPMSExtensionName, 0, 0,
-                 ProcDPMSDispatch, SProcDPMSDispatch,
-                 NULL, StandardMinorOpcode);
+#define CONDITIONALLY_SET_DPMS_TIMEOUT(_timeout_value_)         \
+    if (_timeout_value_ == -1) { /* not yet set from config */  \
+        _timeout_value_ = ScreenSaverTime;                      \
+    }
+
+    CONDITIONALLY_SET_DPMS_TIMEOUT(DPMSStandbyTime)
+    CONDITIONALLY_SET_DPMS_TIMEOUT(DPMSSuspendTime)
+    CONDITIONALLY_SET_DPMS_TIMEOUT(DPMSOffTime)
+
+    DPMSPowerLevel = DPMSModeOn;
+    DPMSEnabled = DPMSSupported();
+
+    if (DPMSEnabled)
+        AddExtension(DPMSExtensionName, 0, 0,
+                     ProcDPMSDispatch, SProcDPMSDispatch,
+                     DPMSCloseDownExtension, StandardMinorOpcode);
 }

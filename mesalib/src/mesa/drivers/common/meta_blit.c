@@ -59,7 +59,7 @@ static void
 setup_glsl_msaa_blit_scaled_shader(struct gl_context *ctx,
                                    struct blit_state *blit,
                                    struct gl_renderbuffer *src_rb,
-                                   GLenum target, GLenum filter)
+                                   GLenum target)
 {
    GLint loc_src_width, loc_src_height;
    int i, samples;
@@ -581,7 +581,7 @@ setup_glsl_blit_framebuffer(struct gl_context *ctx,
                                    2, texcoord_size, 0);
 
    if (is_target_multisample && is_filter_scaled_resolve && is_scaled_blit) {
-      setup_glsl_msaa_blit_scaled_shader(ctx, blit, src_rb, target, filter);
+      setup_glsl_msaa_blit_scaled_shader(ctx, blit, src_rb, target);
    } else if (is_target_multisample) {
       setup_glsl_msaa_blit_shader(ctx, blit, drawFb, src_rb, target);
    } else {
@@ -639,11 +639,12 @@ blitframebuffer_texture(struct gl_context *ctx,
        */
       srcLevel = readAtt->TextureLevel;
       texObj = readAtt->Texture;
-      target = texObj->Target;
    } else if (!readAtt->Texture && ctx->Driver.BindRenderbufferTexImage) {
-      if (!_mesa_meta_bind_rb_as_tex_image(ctx, rb, &fb_tex_blit.tempTex,
-                                           &texObj, &target))
+      texObj = _mesa_meta_texture_object_from_renderbuffer(ctx, rb);
+      if (texObj == NULL)
          return false;
+
+      fb_tex_blit.temp_tex_obj = texObj;
 
       srcLevel = 0;
       if (_mesa_is_winsys_fbo(readFb)) {
@@ -673,8 +674,7 @@ blitframebuffer_texture(struct gl_context *ctx,
       }
 
       srcLevel = 0;
-      target = meta_temp_texture->Target;
-      texObj = _mesa_lookup_texture(ctx, meta_temp_texture->TexObj);
+      texObj = meta_temp_texture->tex_obj;
       if (texObj == NULL) {
          return false;
       }
@@ -685,6 +685,7 @@ blitframebuffer_texture(struct gl_context *ctx,
                                        tex_base_format,
                                        filter);
 
+      assert(texObj->Target == meta_temp_texture->Target);
 
       srcX0 = 0;
       srcY0 = 0;
@@ -692,6 +693,8 @@ blitframebuffer_texture(struct gl_context *ctx,
       srcY1 = srcH;
    }
 
+   target = texObj->Target;
+   fb_tex_blit.tex_obj = texObj;
    fb_tex_blit.baseLevelSave = texObj->BaseLevel;
    fb_tex_blit.maxLevelSave = texObj->MaxLevel;
    fb_tex_blit.stencilSamplingSave = texObj->StencilSampling;
@@ -800,8 +803,7 @@ blitframebuffer_texture(struct gl_context *ctx,
       verts[3].tex[1] = t1;
       verts[3].tex[2] = readAtt->Zoffset;
 
-      _mesa_buffer_sub_data(ctx, blit->buf_obj, 0, sizeof(verts), verts,
-                            __func__);
+      _mesa_buffer_sub_data(ctx, blit->buf_obj, 0, sizeof(verts), verts);
    }
 
    /* setup viewport */
@@ -832,7 +834,7 @@ _mesa_meta_fb_tex_blit_begin(struct gl_context *ctx,
    blit->samp_obj_save = NULL;
    _mesa_reference_sampler_object(ctx, &blit->samp_obj_save,
                                   ctx->Texture.Unit[ctx->Texture.CurrentUnit].Sampler);
-   blit->tempTex = 0;
+   blit->temp_tex_obj = NULL;
 }
 
 void
@@ -842,65 +844,59 @@ _mesa_meta_fb_tex_blit_end(struct gl_context *ctx, GLenum target,
    struct gl_texture_object *const texObj =
       _mesa_get_current_tex_object(ctx, target);
 
-   /* Restore texture object state, the texture binding will
-    * be restored by _mesa_meta_end().
+   /* Either there is no temporary texture or the temporary texture is bound. */
+   assert(blit->temp_tex_obj == NULL || blit->temp_tex_obj == texObj);
+
+   /* Restore texture object state, the texture binding will be restored by
+    * _mesa_meta_end().  If the texture is the temporary texture that is about
+    * to be destroyed, don't bother restoring its state.
     */
-   if (target != GL_TEXTURE_RECTANGLE_ARB) {
-      _mesa_texture_parameteriv(ctx, texObj, GL_TEXTURE_BASE_LEVEL,
-                                &blit->baseLevelSave, false);
-      _mesa_texture_parameteriv(ctx, texObj, GL_TEXTURE_MAX_LEVEL,
-                                &blit->maxLevelSave, false);
-   }
-
-   /* If ARB_stencil_texturing is not supported, the mode won't have changed. */
-   if (texObj->StencilSampling != blit->stencilSamplingSave) {
-      /* GLint so the compiler won't complain about type signedness mismatch
-       * in the call to _mesa_texture_parameteriv below.
+   if (blit->temp_tex_obj == NULL) {
+      /* If the target restricts values for base level or max level, we assume
+       * that the original values were valid.
        */
-      const GLint param = blit->stencilSamplingSave ?
-         GL_STENCIL_INDEX : GL_DEPTH_COMPONENT;
+      if (blit->baseLevelSave != texObj->BaseLevel)
+         _mesa_texture_parameteriv(ctx, texObj, GL_TEXTURE_BASE_LEVEL,
+                                   &blit->baseLevelSave, false);
 
-      _mesa_texture_parameteriv(ctx, texObj, GL_DEPTH_STENCIL_TEXTURE_MODE,
-                                &param, false);
+      if (blit->maxLevelSave != texObj->MaxLevel)
+         _mesa_texture_parameteriv(ctx, texObj, GL_TEXTURE_MAX_LEVEL,
+                                   &blit->maxLevelSave, false);
+
+      /* If ARB_stencil_texturing is not supported, the mode won't have changed. */
+      if (texObj->StencilSampling != blit->stencilSamplingSave) {
+         /* GLint so the compiler won't complain about type signedness mismatch
+          * in the call to _mesa_texture_parameteriv below.
+          */
+         const GLint param = blit->stencilSamplingSave ?
+            GL_STENCIL_INDEX : GL_DEPTH_COMPONENT;
+
+         _mesa_texture_parameteriv(ctx, texObj, GL_DEPTH_STENCIL_TEXTURE_MODE,
+                                   &param, false);
+      }
    }
 
    _mesa_bind_sampler(ctx, ctx->Texture.CurrentUnit, blit->samp_obj_save);
    _mesa_reference_sampler_object(ctx, &blit->samp_obj_save, NULL);
    _mesa_reference_sampler_object(ctx, &blit->samp_obj, NULL);
-
-   if (blit->tempTex)
-      _mesa_DeleteTextures(1, &blit->tempTex);
+   _mesa_delete_nameless_texture(ctx, blit->temp_tex_obj);
 }
 
-GLboolean
-_mesa_meta_bind_rb_as_tex_image(struct gl_context *ctx,
-                                struct gl_renderbuffer *rb,
-                                GLuint *tex,
-                                struct gl_texture_object **texObj,
-                                GLenum *target)
+struct gl_texture_object *
+_mesa_meta_texture_object_from_renderbuffer(struct gl_context *ctx,
+                                            struct gl_renderbuffer *rb)
 {
    struct gl_texture_image *texImage;
-   GLuint tempTex;
+   struct gl_texture_object *texObj;
+   const GLenum target = rb->NumSamples > 1
+      ? GL_TEXTURE_2D_MULTISAMPLE : GL_TEXTURE_2D;
 
-   if (rb->NumSamples > 1)
-      *target = GL_TEXTURE_2D_MULTISAMPLE;
-   else
-      *target = GL_TEXTURE_2D;
-
-   tempTex = 0;
-   _mesa_GenTextures(1, &tempTex);
-   if (tempTex == 0)
-      return false;
-
-   *tex = tempTex;
-
-   _mesa_BindTexture(*target, *tex);
-   *texObj = _mesa_lookup_texture(ctx, *tex);
-   texImage = _mesa_get_tex_image(ctx, *texObj, *target, 0);
+   texObj = ctx->Driver.NewTextureObject(ctx, 0xDEADBEEF, target);
+   texImage = _mesa_get_tex_image(ctx, texObj, target, 0);
 
    if (!ctx->Driver.BindRenderbufferTexImage(ctx, rb, texImage)) {
-      _mesa_DeleteTextures(1, tex);
-      return false;
+      _mesa_delete_nameless_texture(ctx, texObj);
+      return NULL;
    }
 
    if (ctx->Driver.FinishRenderTexture && !rb->NeedsFinishRenderTexture) {
@@ -908,7 +904,7 @@ _mesa_meta_bind_rb_as_tex_image(struct gl_context *ctx,
       ctx->Driver.FinishRenderTexture(ctx, rb);
    }
 
-   return true;
+   return texObj;
 }
 
 struct gl_sampler_object *
@@ -931,7 +927,7 @@ _mesa_meta_setup_sampler(struct gl_context *ctx,
                           samp_obj->WrapR);
 
    /* Prepare src texture state */
-   _mesa_BindTexture(target, texObj->Name);
+   _mesa_bind_texture(ctx, target, texObj);
    if (target != GL_TEXTURE_RECTANGLE_ARB) {
       _mesa_texture_parameteriv(ctx, texObj, GL_TEXTURE_BASE_LEVEL,
                                 (GLint *) &srcLevel, false);
@@ -1050,8 +1046,10 @@ _mesa_meta_glsl_blit_cleanup(struct gl_context *ctx, struct blit_state *blit)
    _mesa_meta_blit_shader_table_cleanup(ctx, &blit->shaders_with_depth);
    _mesa_meta_blit_shader_table_cleanup(ctx, &blit->shaders_without_depth);
 
-   _mesa_DeleteTextures(1, &blit->depthTex.TexObj);
-   blit->depthTex.TexObj = 0;
+   if (blit->depthTex.tex_obj != NULL) {
+      _mesa_delete_nameless_texture(ctx, blit->depthTex.tex_obj);
+      blit->depthTex.tex_obj = NULL;
+   }
 }
 
 void

@@ -372,8 +372,7 @@ XIGetKnownProperty(const char *name)
     if (!name)
         return None;
 
-    for (i = 0; i < (sizeof(dev_properties) / sizeof(struct dev_properties));
-         i++) {
+    for (i = 0; i < ARRAY_SIZE(dev_properties); i++) {
         if (strcmp(name, dev_properties[i].name) == 0) {
             if (dev_properties[i].type == None) {
                 dev_properties[i].type =
@@ -393,8 +392,7 @@ XIResetProperties(void)
 {
     int i;
 
-    for (i = 0; i < (sizeof(dev_properties) / sizeof(struct dev_properties));
-         i++)
+    for (i = 0; i < ARRAY_SIZE(dev_properties); i++)
         dev_properties[i].type = None;
 }
 
@@ -769,8 +767,10 @@ XIChangeDeviceProperty(DeviceIntPtr dev, Atom property, Atom type,
                 handler = dev->properties.handlers;
                 while (handler) {
                     if (handler->SetProperty) {
+                        input_lock();
                         rc = handler->SetProperty(dev, prop->propertyName,
                                                   &new_value, checkonly);
+                        input_unlock();
                         if (checkonly && rc != Success) {
                             free(new_value.data);
                             if (add)
@@ -1009,7 +1009,7 @@ ProcXGetDeviceProperty(ClientPtr client)
     return Success;
 }
 
-int
+int _X_COLD
 SProcXListDeviceProperties(ClientPtr client)
 {
     REQUEST(xListDevicePropertiesReq);
@@ -1019,7 +1019,7 @@ SProcXListDeviceProperties(ClientPtr client)
     return (ProcXListDeviceProperties(client));
 }
 
-int
+int _X_COLD
 SProcXChangeDeviceProperty(ClientPtr client)
 {
     REQUEST(xChangeDevicePropertyReq);
@@ -1032,7 +1032,7 @@ SProcXChangeDeviceProperty(ClientPtr client)
     return (ProcXChangeDeviceProperty(client));
 }
 
-int
+int _X_COLD
 SProcXDeleteDeviceProperty(ClientPtr client)
 {
     REQUEST(xDeleteDevicePropertyReq);
@@ -1043,7 +1043,7 @@ SProcXDeleteDeviceProperty(ClientPtr client)
     return (ProcXDeleteDeviceProperty(client));
 }
 
-int
+int _X_COLD
 SProcXGetDeviceProperty(ClientPtr client)
 {
     REQUEST(xGetDevicePropertyReq);
@@ -1059,7 +1059,7 @@ SProcXGetDeviceProperty(ClientPtr client)
 
 /* Reply swapping */
 
-void
+void _X_COLD
 SRepXListDeviceProperties(ClientPtr client, int size,
                           xListDevicePropertiesReply * rep)
 {
@@ -1070,7 +1070,7 @@ SRepXListDeviceProperties(ClientPtr client, int size,
     WriteToClient(client, size, rep);
 }
 
-void
+void _X_COLD
 SRepXGetDeviceProperty(ClientPtr client, int size,
                        xGetDevicePropertyReply * rep)
 {
@@ -1246,7 +1246,7 @@ ProcXIGetProperty(ClientPtr client)
     return Success;
 }
 
-int
+int _X_COLD
 SProcXIListProperties(ClientPtr client)
 {
     REQUEST(xXIListPropertiesReq);
@@ -1257,7 +1257,7 @@ SProcXIListProperties(ClientPtr client)
     return (ProcXIListProperties(client));
 }
 
-int
+int _X_COLD
 SProcXIChangeProperty(ClientPtr client)
 {
     REQUEST(xXIChangePropertyReq);
@@ -1271,7 +1271,7 @@ SProcXIChangeProperty(ClientPtr client)
     return (ProcXIChangeProperty(client));
 }
 
-int
+int _X_COLD
 SProcXIDeleteProperty(ClientPtr client)
 {
     REQUEST(xXIDeletePropertyReq);
@@ -1283,7 +1283,7 @@ SProcXIDeleteProperty(ClientPtr client)
     return (ProcXIDeleteProperty(client));
 }
 
-int
+int _X_COLD
 SProcXIGetProperty(ClientPtr client)
 {
     REQUEST(xXIGetPropertyReq);
@@ -1298,7 +1298,7 @@ SProcXIGetProperty(ClientPtr client)
     return (ProcXIGetProperty(client));
 }
 
-void
+void _X_COLD
 SRepXIListProperties(ClientPtr client, int size, xXIListPropertiesReply * rep)
 {
     swaps(&rep->sequenceNumber);
@@ -1308,7 +1308,7 @@ SRepXIListProperties(ClientPtr client, int size, xXIListPropertiesReply * rep)
     WriteToClient(client, size, rep);
 }
 
-void
+void _X_COLD
 SRepXIGetProperty(ClientPtr client, int size, xXIGetPropertyReply * rep)
 {
     swaps(&rep->sequenceNumber);

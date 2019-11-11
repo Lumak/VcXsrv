@@ -149,13 +149,13 @@ get_parameter_match_type(const ir_variable *param,
    if (from_type == to_type)
       return PARAMETER_EXACT_MATCH;
 
-   if (to_type->base_type == GLSL_TYPE_DOUBLE) {
-      if (from_type->base_type == GLSL_TYPE_FLOAT)
+   if (to_type->is_double()) {
+      if (from_type->is_float())
          return PARAMETER_FLOAT_TO_DOUBLE;
       return PARAMETER_INT_TO_DOUBLE;
    }
 
-   if (to_type->base_type == GLSL_TYPE_FLOAT)
+   if (to_type->is_float())
       return PARAMETER_INT_TO_FLOAT;
 
    /* int -> uint and any other oddball conversions */
@@ -274,7 +274,8 @@ choose_best_inexact_overload(_mesa_glsl_parse_state *state,
     * assume everything supported in any GLSL version is available.
     */
    if (!state || state->is_version(400, 0) || state->ARB_gpu_shader5_enable ||
-       state->MESA_shader_integer_functions_enable) {
+       state->MESA_shader_integer_functions_enable ||
+       state->EXT_shader_implicit_conversions_enable) {
       for (ir_function_signature **sig = matches; sig < matches + num_matches; sig++) {
          if (is_best_inexact_overload(actual_parameters, matches, num_matches, *sig))
             return *sig;

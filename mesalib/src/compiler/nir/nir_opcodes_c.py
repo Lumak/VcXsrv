@@ -1,4 +1,3 @@
-#! /usr/bin/env python
 #
 # Copyright (C) 2014 Connor Abbott
 #
@@ -24,14 +23,100 @@
 # Authors:
 #    Connor Abbott (cwabbott0@gmail.com)
 
+from __future__ import print_function
+
 from nir_opcodes import opcodes
 from mako.template import Template
 
 template = Template("""
 #include "nir.h"
 
+nir_op
+nir_type_conversion_op(nir_alu_type src, nir_alu_type dst, nir_rounding_mode rnd)
+{
+   nir_alu_type src_base = (nir_alu_type) nir_alu_type_get_base_type(src);
+   nir_alu_type dst_base = (nir_alu_type) nir_alu_type_get_base_type(dst);
+   unsigned src_bit_size = nir_alu_type_get_type_size(src);
+   unsigned dst_bit_size = nir_alu_type_get_type_size(dst);
+
+   if (src == dst && src_base == nir_type_float) {
+      return nir_op_fmov;
+   } else if ((src_base == nir_type_int || src_base == nir_type_uint) &&
+              (dst_base == nir_type_int || dst_base == nir_type_uint) &&
+              src_bit_size == dst_bit_size) {
+      /* Integer <-> integer conversions with the same bit-size on both
+       * ends are just no-op moves.
+       */
+      return nir_op_imov;
+   }
+
+   switch (src_base) {
+%     for src_t in ['int', 'uint', 'float']:
+      case nir_type_${src_t}:
+         switch (dst_base) {
+%           for dst_t in ['int', 'uint', 'float']:
+            case nir_type_${dst_t}:
+%              if src_t in ['int', 'uint'] and dst_t in ['int', 'uint']:
+%                 if dst_t == 'int':
+<%                   continue %>
+%                 else:
+<%                   dst_t = src_t %>
+%                 endif
+%              endif
+               switch (dst_bit_size) {
+%                 if dst_t == 'float':
+<%                    bit_sizes = [16, 32, 64] %>
+%                 else:
+<%                    bit_sizes = [8, 16, 32, 64] %>
+%                 endif
+%                 for dst_bits in bit_sizes:
+                  case ${dst_bits}:
+%                    if src_t == 'float' and dst_t == 'float' and dst_bits == 16:
+                     switch(rnd) {
+%                       for rnd_t in [('rtne', '_rtne'), ('rtz', '_rtz'), ('undef', '')]:
+                        case nir_rounding_mode_${rnd_t[0]}:
+                           return ${'nir_op_{0}2{1}{2}{3}'.format(src_t[0], dst_t[0],
+                                                                   dst_bits, rnd_t[1])};
+%                       endfor
+                        default:
+                           unreachable("Invalid 16-bit nir rounding mode");
+                     }
+%                    else:
+                     assert(rnd == nir_rounding_mode_undef);
+                     return ${'nir_op_{0}2{1}{2}'.format(src_t[0], dst_t[0], dst_bits)};
+%                    endif
+%                 endfor
+                  default:
+                     unreachable("Invalid nir alu bit size");
+               }
+%           endfor
+            case nir_type_bool:
+%              if src_t == 'float':
+                  return nir_op_f2b;
+%              else:
+                  return nir_op_i2b;
+%              endif
+            default:
+               unreachable("Invalid nir alu base type");
+         }
+%     endfor
+      case nir_type_bool:
+         switch (dst_base) {
+            case nir_type_int:
+            case nir_type_uint:
+               return nir_op_b2i;
+            case nir_type_float:
+               return nir_op_b2f;
+            default:
+               unreachable("Invalid nir alu base type");
+         }
+      default:
+         unreachable("Invalid nir alu base type");
+   }
+}
+
 const nir_op_info nir_op_infos[nir_num_opcodes] = {
-% for name, opcode in sorted(opcodes.iteritems()):
+% for name, opcode in sorted(opcodes.items()):
 {
    .name = "${name}",
    .num_inputs = ${opcode.num_inputs},
@@ -52,4 +137,4 @@ const nir_op_info nir_op_infos[nir_num_opcodes] = {
 };
 """)
 
-print template.render(opcodes=opcodes)
+print(template.render(opcodes=opcodes))

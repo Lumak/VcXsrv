@@ -35,26 +35,37 @@
  * same value was used in different vector contant loads.
  */
 
-static void
+static bool
 lower_load_const_instr_scalar(nir_load_const_instr *lower)
 {
    if (lower->def.num_components == 1)
-      return;
+      return false;
 
    nir_builder b;
    nir_builder_init(&b, nir_cf_node_get_function(&lower->instr.block->cf_node));
    b.cursor = nir_before_instr(&lower->instr);
 
    /* Emit the individual loads. */
-   nir_ssa_def *loads[4];
+   nir_ssa_def *loads[NIR_MAX_VEC_COMPONENTS];
    for (unsigned i = 0; i < lower->def.num_components; i++) {
       nir_load_const_instr *load_comp =
          nir_load_const_instr_create(b.shader, 1, lower->def.bit_size);
-      if (lower->def.bit_size == 64)
-         load_comp->value.f64[0] = lower->value.f64[i];
-      else
+      switch (lower->def.bit_size) {
+      case 64:
+         load_comp->value.u64[0] = lower->value.u64[i];
+         break;
+      case 32:
          load_comp->value.u32[0] = lower->value.u32[i];
-      assert(lower->def.bit_size == 64 || lower->def.bit_size == 32);
+         break;
+      case 16:
+         load_comp->value.u16[0] = lower->value.u16[i];
+         break;
+      case 8:
+         load_comp->value.u8[0] = lower->value.u8[i];
+         break;
+      default:
+         assert(!"invalid bit size");
+      }
       nir_builder_instr_insert(&b, &load_comp->instr);
       loads[i] = &load_comp->def;
    }
@@ -65,24 +76,38 @@ lower_load_const_instr_scalar(nir_load_const_instr *lower)
    /* Replace the old load with a reference to our reconstructed vector. */
    nir_ssa_def_rewrite_uses(&lower->def, nir_src_for_ssa(vec));
    nir_instr_remove(&lower->instr);
+   return true;
 }
 
-static void
+static bool
 nir_lower_load_const_to_scalar_impl(nir_function_impl *impl)
 {
+   bool progress = false;
+
    nir_foreach_block(block, impl) {
       nir_foreach_instr_safe(instr, block) {
          if (instr->type == nir_instr_type_load_const)
-            lower_load_const_instr_scalar(nir_instr_as_load_const(instr));
+            progress |=
+               lower_load_const_instr_scalar(nir_instr_as_load_const(instr));
       }
    }
+
+   if (progress)
+      nir_metadata_preserve(impl, nir_metadata_block_index |
+                                  nir_metadata_dominance);
+
+   return progress;
 }
 
-void
+bool
 nir_lower_load_const_to_scalar(nir_shader *shader)
 {
+   bool progress = false;
+
    nir_foreach_function(function, shader) {
       if (function->impl)
-         nir_lower_load_const_to_scalar_impl(function->impl);
+         progress |= nir_lower_load_const_to_scalar_impl(function->impl);
    }
+
+   return progress;
 }

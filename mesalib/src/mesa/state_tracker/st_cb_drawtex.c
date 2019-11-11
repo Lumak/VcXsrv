@@ -120,10 +120,10 @@ st_DrawTex(struct gl_context *ctx, GLfloat x, GLfloat y, GLfloat z,
    st_flush_bitmap_cache(st);
    st_invalidate_readpix_cache(st);
 
-   st_validate_state(st, ST_PIPELINE_RENDER);
+   st_validate_state(st, ST_PIPELINE_META);
 
    /* determine if we need vertex color */
-   if (ctx->FragmentProgram._Current->Base.InputsRead & VARYING_BIT_COL0)
+   if (ctx->FragmentProgram._Current->info.inputs_read & VARYING_BIT_COL0)
       emitColor = GL_TRUE;
    else
       emitColor = GL_FALSE;
@@ -156,7 +156,7 @@ st_DrawTex(struct gl_context *ctx, GLfloat x, GLfloat y, GLfloat z,
       GLfloat *vbuf = NULL;
       GLuint tex_attr;
 
-      u_upload_alloc(st->uploader, 0,
+      u_upload_alloc(pipe->stream_uploader, 0,
                      numAttribs * 4 * 4 * sizeof(GLfloat), 4,
                      &offset, &vbuffer, (void **) &vbuf);
       if (!vbuffer) {
@@ -228,7 +228,7 @@ st_DrawTex(struct gl_context *ctx, GLfloat x, GLfloat y, GLfloat z,
          }
       }
 
-      u_upload_unmap(st->uploader);
+      u_upload_unmap(pipe->stream_uploader);
 
 #undef SET_ATTRIB
    }
@@ -276,8 +276,7 @@ st_DrawTex(struct gl_context *ctx, GLfloat x, GLfloat y, GLfloat z,
       cso_set_viewport(cso, &vp);
    }
 
-   util_draw_vertex_buffer(pipe, cso, vbuffer,
-			   cso_get_aux_vertex_buffer_slot(cso),
+   util_draw_vertex_buffer(pipe, cso, vbuffer, 0,
                            offset,  /* offset */
                            PIPE_PRIM_TRIANGLE_FAN,
                            4,  /* verts */

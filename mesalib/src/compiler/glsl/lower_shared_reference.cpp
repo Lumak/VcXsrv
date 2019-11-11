@@ -33,9 +33,11 @@
 
 #include "lower_buffer_access.h"
 #include "ir_builder.h"
+#include "linker.h"
 #include "main/macros.h"
 #include "util/list.h"
 #include "glsl_parser_extras.h"
+#include "main/mtypes.h"
 
 using namespace ir_builder;
 
@@ -136,13 +138,13 @@ lower_shared_reference_visitor::handle_rvalue(ir_rvalue **rvalue)
    ir_rvalue *offset = NULL;
    unsigned const_offset = get_shared_offset(var);
    bool row_major;
-   int matrix_columns;
+   const glsl_type *matrix_type;
    assert(var->get_interface_type() == NULL);
    const enum glsl_interface_packing packing = GLSL_INTERFACE_PACKING_STD430;
 
    setup_buffer_access(mem_ctx, deref,
                        &offset, &const_offset,
-                       &row_major, &matrix_columns, NULL, packing);
+                       &row_major, &matrix_type, NULL, packing);
 
    /* Now that we've calculated the offset to the start of the
     * dereference, walk over the type and emit loads into a temporary.
@@ -162,7 +164,7 @@ lower_shared_reference_visitor::handle_rvalue(ir_rvalue **rvalue)
    deref = new(mem_ctx) ir_dereference_variable(load_var);
 
    emit_access(mem_ctx, false, deref, load_offset, const_offset, row_major,
-               matrix_columns, packing, 0);
+               matrix_type, packing, 0);
 
    *rvalue = deref;
 
@@ -204,13 +206,13 @@ lower_shared_reference_visitor::handle_assignment(ir_assignment *ir)
    ir_rvalue *offset = NULL;
    unsigned const_offset = get_shared_offset(var);
    bool row_major;
-   int matrix_columns;
+   const glsl_type *matrix_type;
    assert(var->get_interface_type() == NULL);
    const enum glsl_interface_packing packing = GLSL_INTERFACE_PACKING_STD430;
 
    setup_buffer_access(mem_ctx, deref,
                        &offset, &const_offset,
-                       &row_major, &matrix_columns, NULL, packing);
+                       &row_major, &matrix_type, NULL, packing);
 
    deref = new(mem_ctx) ir_dereference_variable(store_var);
 
@@ -222,7 +224,7 @@ lower_shared_reference_visitor::handle_assignment(ir_assignment *ir)
 
    /* Now we have to write the value assigned to the temporary back to memory */
    emit_access(mem_ctx, true, deref, store_offset, const_offset, row_major,
-               matrix_columns, packing, ir->write_mask);
+               matrix_type, packing, ir->write_mask);
 
    progress = true;
 }
@@ -240,7 +242,7 @@ lower_shared_reference_visitor::insert_buffer_access(void *mem_ctx,
                                                      const glsl_type *type,
                                                      ir_rvalue *offset,
                                                      unsigned mask,
-                                                     int channel)
+                                                     int /* channel */)
 {
    if (buffer_access_type == shared_store_access) {
       ir_call *store = shared_store(mem_ctx, deref, offset, mask);
@@ -284,7 +286,7 @@ lower_shared_reference_visitor::shared_store(void *mem_ctx,
       ir_function_signature(glsl_type::void_type, compute_shader_enabled);
    assert(sig);
    sig->replace_parameters(&sig_params);
-   sig->is_intrinsic = true;
+   sig->intrinsic_id = ir_intrinsic_shared_store;
 
    ir_function *f = new(mem_ctx) ir_function("__intrinsic_store_shared");
    f->add_signature(sig);
@@ -311,7 +313,7 @@ lower_shared_reference_visitor::shared_load(void *mem_ctx,
       new(mem_ctx) ir_function_signature(type, compute_shader_enabled);
    assert(sig);
    sig->replace_parameters(&sig_params);
-   sig->is_intrinsic = true;
+   sig->intrinsic_id = ir_intrinsic_shared_load;
 
    ir_function *f = new(mem_ctx) ir_function("__intrinsic_load_shared");
    f->add_signature(sig);
@@ -351,7 +353,8 @@ lower_shared_reference_visitor::lower_shared_atomic_intrinsic(ir_call *ir)
           inst->ir_type == ir_type_swizzle);
 
    ir_rvalue *deref = (ir_rvalue *) inst;
-   assert(deref->type->is_scalar() && deref->type->is_integer());
+   assert(deref->type->is_scalar() &&
+          (deref->type->is_integer() || deref->type->is_float()));
 
    ir_variable *var = deref->variable_referenced();
    assert(var);
@@ -363,18 +366,18 @@ lower_shared_reference_visitor::lower_shared_atomic_intrinsic(ir_call *ir)
    ir_rvalue *offset = NULL;
    unsigned const_offset = get_shared_offset(var);
    bool row_major;
-   int matrix_columns;
+   const glsl_type *matrix_type;
    assert(var->get_interface_type() == NULL);
    const enum glsl_interface_packing packing = GLSL_INTERFACE_PACKING_STD430;
    buffer_access_type = shared_atomic_access;
 
    setup_buffer_access(mem_ctx, deref,
                        &offset, &const_offset,
-                       &row_major, &matrix_columns, NULL, packing);
+                       &row_major, &matrix_type, NULL, packing);
 
    assert(offset);
    assert(!row_major);
-   assert(matrix_columns == 1);
+   assert(matrix_type == NULL);
 
    ir_rvalue *deref_offset =
       add(offset, new(mem_ctx) ir_constant(const_offset));
@@ -387,8 +390,7 @@ lower_shared_reference_visitor::lower_shared_atomic_intrinsic(ir_call *ir)
       ir_variable(glsl_type::uint_type, "offset" , ir_var_function_in);
    sig_params.push_tail(sig_param);
 
-   const glsl_type *type = deref->type->base_type == GLSL_TYPE_INT ?
-      glsl_type::int_type : glsl_type::uint_type;
+   const glsl_type *type = deref->type->get_scalar_type();
    sig_param = new(mem_ctx)
          ir_variable(type, "data1", ir_var_function_in);
    sig_params.push_tail(sig_param);
@@ -404,7 +406,10 @@ lower_shared_reference_visitor::lower_shared_atomic_intrinsic(ir_call *ir)
                                          compute_shader_enabled);
    assert(sig);
    sig->replace_parameters(&sig_params);
-   sig->is_intrinsic = true;
+
+   assert(ir->callee->intrinsic_id >= ir_intrinsic_generic_load);
+   assert(ir->callee->intrinsic_id <= ir_intrinsic_generic_atomic_comp_swap);
+   sig->intrinsic_id = MAP_INTRINSIC_TO_TYPE(ir->callee->intrinsic_id, shared);
 
    char func_name[64];
    sprintf(func_name, "%s_shared", ir->callee_name());
@@ -444,15 +449,15 @@ lower_shared_reference_visitor::check_for_shared_atomic_intrinsic(ir_call *ir)
    if (!var || var->data.mode != ir_var_shader_shared)
       return ir;
 
-   const char *callee = ir->callee_name();
-   if (!strcmp("__intrinsic_atomic_add", callee) ||
-       !strcmp("__intrinsic_atomic_min", callee) ||
-       !strcmp("__intrinsic_atomic_max", callee) ||
-       !strcmp("__intrinsic_atomic_and", callee) ||
-       !strcmp("__intrinsic_atomic_or", callee) ||
-       !strcmp("__intrinsic_atomic_xor", callee) ||
-       !strcmp("__intrinsic_atomic_exchange", callee) ||
-       !strcmp("__intrinsic_atomic_comp_swap", callee)) {
+   const enum ir_intrinsic_id id = ir->callee->intrinsic_id;
+   if (id == ir_intrinsic_generic_atomic_add ||
+       id == ir_intrinsic_generic_atomic_min ||
+       id == ir_intrinsic_generic_atomic_max ||
+       id == ir_intrinsic_generic_atomic_and ||
+       id == ir_intrinsic_generic_atomic_or ||
+       id == ir_intrinsic_generic_atomic_xor ||
+       id == ir_intrinsic_generic_atomic_exchange ||
+       id == ir_intrinsic_generic_atomic_comp_swap) {
       return lower_shared_atomic_intrinsic(ir);
    }
 
@@ -475,7 +480,9 @@ lower_shared_reference_visitor::visit_enter(ir_call *ir)
 } /* unnamed namespace */
 
 void
-lower_shared_reference(struct gl_linked_shader *shader, unsigned *shared_size)
+lower_shared_reference(struct gl_context *ctx,
+                       struct gl_shader_program *prog,
+                       struct gl_linked_shader *shader)
 {
    if (shader->Stage != MESA_SHADER_COMPUTE)
       return;
@@ -492,5 +499,19 @@ lower_shared_reference(struct gl_linked_shader *shader, unsigned *shared_size)
       visit_list_elements(&v, shader->ir);
    } while (v.progress);
 
-   *shared_size = v.shared_size;
+   prog->Comp.SharedSize = v.shared_size;
+
+   /* Section 19.1 (Compute Shader Variables) of the OpenGL 4.5 (Core Profile)
+    * specification says:
+    *
+    *   "There is a limit to the total size of all variables declared as
+    *    shared in a single program object. This limit, expressed in units of
+    *    basic machine units, may be queried as the value of
+    *    MAX_COMPUTE_SHARED_MEMORY_SIZE."
+    */
+   if (prog->Comp.SharedSize > ctx->Const.MaxComputeSharedMemorySize) {
+      linker_error(prog, "Too much shared memory used (%u/%u)\n",
+                   prog->Comp.SharedSize,
+                   ctx->Const.MaxComputeSharedMemorySize);
+   }
 }

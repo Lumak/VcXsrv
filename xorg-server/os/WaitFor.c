@@ -90,24 +90,6 @@ SOFTWARE.
 #define GetErrno() errno
 #endif
 
-/* like ffs, but uses fd_mask instead of int as argument, so it works
-   when fd_mask is longer than an int, such as common 64-bit platforms */
-/* modifications by raphael */
-int
-mffs(fd_mask mask)
-{
-    int i;
-
-    if (!mask)
-        return 0;
-    i = 1;
-    while (!(mask & 1)) {
-        i++;
-        mask >>= 1;
-    }
-    return i;
-}
-
 #ifdef DPMSExtension
 #include <X11/extensions/dpmsconst.h>
 #endif
@@ -143,7 +125,7 @@ check_timers(void)
 {
     OsTimerPtr timer;
 
-    while ((timer = first_timer()) != NULL) {
+    if ((timer = first_timer()) != NULL) {
         CARD32 now = GetTimeInMillis();
         int timeout = timer->expires - now;
 
@@ -157,6 +139,8 @@ check_timers(void)
             /* time has rewound.  reset the timers. */
             CheckAllTimers();
         }
+
+        return 0;
     }
     return -1;
 }
@@ -178,23 +162,20 @@ check_timers(void)
  *     pClientsReady is an array to store ready client->index values into.
  *****************/
 
+static Bool timer_is_running;
+
 Bool
 WaitForSomething(Bool are_ready)
 {
     int i;
     int timeout;
     int pollerr;
-    static Bool were_ready;
-    Bool timer_is_running;
 
-    timer_is_running = were_ready;
-
-    if (were_ready && !are_ready) {
+    if (timer_is_running && !are_ready)
+    {
         timer_is_running = FALSE;
         SmartScheduleStopTimer();
     }
-
-    were_ready = FALSE;
 
 #ifdef BUSFAULT
     busfault_check();
@@ -204,13 +185,15 @@ WaitForSomething(Bool are_ready)
        crashed connections and the screen saver timeout */
     while (1) {
         /* deal with any blocked jobs */
-        if (workQueue)
+        if (workQueue) {
             ProcessWorkQueue();
+        }
+
+        timeout = check_timers();
+        are_ready = clients_are_ready();
 
         if (are_ready)
             timeout = 0;
-        else
-            timeout = check_timers();
 
         BlockHandler(&timeout);
         if (NewOutputPending)
@@ -219,30 +202,118 @@ WaitForSomething(Bool are_ready)
         if (dispatchException)
             i = -1;
         else
+        {
+            if (!timeout) timeout=10; /* Avoid a 100 % usage loop, timeout is in milliseconds */
             i = ospoll_wait(server_poll, timeout);
+        }
         pollerr = GetErrno();
-        WakeupHandler(i);
         if (i <= 0) {           /* An error or timeout occurred */
             if (dispatchException)
                 return FALSE;
             if (i < 0) {
-                if (pollerr != EINTR && !ETEST(pollerr)) {
-                    ErrorF("WaitForSomething(): poll: %s\n",
-                           strerror(pollerr));
+                char szMessage[1024];
+                FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM, 0, pollerr, 0, szMessage, 1024, NULL );
+                ErrorF("WaitForSomething(): poll: %d %s\n", pollerr, szMessage);
+                if (pollerr == WSAENOTSOCK)
+                {
+                  CheckServerConnections(server_poll);
+                  WakeupHandler(i);
+                  are_ready = clients_are_ready();
+                  continue; // try again
                 }
             }
-        } else
-            are_ready = clients_are_ready();
+        }
 
-        if (*checkForInput[0] != *checkForInput[1])
+        if (InputCheckPending())
+        {
+            WakeupHandler(i);
             return FALSE;
-
-        if (are_ready) {
-            were_ready = TRUE;
+        }
+        are_ready = clients_are_ready();
+        if (are_ready)
+        {
             if (!timer_is_running)
+            {
+                timer_is_running=TRUE;
                 SmartScheduleStartTimer();
+            }
+            WakeupHandler(i);
             return TRUE;
         }
+        WakeupHandler(i);
+    }
+}
+
+Bool isThereSomething(Bool are_ready)
+{
+    if (timer_is_running && !are_ready)
+    {
+        timer_is_running = FALSE;
+        SmartScheduleStopTimer();
+    }
+
+#ifdef BUSFAULT
+    busfault_check();
+#endif
+
+    /* We need a while loop here to handle
+       crashed connections and the screen saver timeout */
+    while (1) {
+        int i;
+        int pollerr;
+        int timeout=0;
+        /* deal with any blocked jobs */
+        if (workQueue) {
+            ProcessWorkQueue();
+        }
+
+        timeout = check_timers();
+        are_ready = clients_are_ready();
+
+        if (are_ready)
+            timeout = 0;
+
+        BlockHandler(&timeout);
+        if (NewOutputPending)
+            FlushAllOutput();
+        /* keep this check close to select() call to minimize race */
+        if (dispatchException)
+            i = -1;
+        else
+        {
+            i = ospoll_wait(server_poll, 1);
+        }
+        pollerr = GetErrno();
+        if (i <= 0) {           /* An error or timeout occurred */
+            if (dispatchException)
+                return FALSE;
+            if (i < 0) {
+                char szMessage[1024];
+                FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM, 0, pollerr, 0, szMessage, 1024, NULL );
+                ErrorF("PollForSomething(): poll: %d %s\n", pollerr, szMessage);
+                if (pollerr == WSAENOTSOCK)
+                {
+                  CheckServerConnections(server_poll);
+                  are_ready = clients_are_ready();
+                  continue; // try again
+                }
+            }
+        }
+
+        if (InputCheckPending())
+            return FALSE;
+
+        if (clients_are_ready())
+        {
+            if (!timer_is_running)
+            {
+                timer_is_running=TRUE;
+                SmartScheduleStartTimer();
+            }
+            return TRUE;
+        }
+        else
+          return FALSE;
     }
 }
 
@@ -310,7 +381,7 @@ OsTimerPtr
 TimerSet(OsTimerPtr timer, int flags, CARD32 millis,
          OsTimerCallback func, void *arg)
 {
-    OsTimerPtr existing, tmp;
+    OsTimerPtr existing;
     CARD32 now = GetTimeInMillis();
 
     if (!timer) {
@@ -343,11 +414,11 @@ TimerSet(OsTimerPtr timer, int flags, CARD32 millis,
     input_lock();
 
     /* Sort into list */
-    xorg_list_for_each_entry_safe(existing, tmp, &timers, list)
+    xorg_list_for_each_entry(existing, &timers, list)
         if ((int) (existing->expires - millis) > 0)
             break;
     /* This even works at the end of the list -- existing->list will be timers */
-    xorg_list_add(&timer->list, existing->list.prev);
+    xorg_list_append(&timer->list, &existing->list);
 
     /* Check to see if the timer is ready to run now */
     if ((int) (millis - now) <= 0)

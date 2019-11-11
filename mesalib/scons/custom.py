@@ -103,11 +103,17 @@ def python_scan(node, env, path):
     # http://www.scons.org/doc/0.98.5/HTML/scons-user/c2781.html#AEN2789
     # https://docs.python.org/2/library/modulefinder.html
     contents = node.get_contents()
-    source_dir = node.get_dir()
-    finder = modulefinder.ModuleFinder()
+
+    # Tell ModuleFinder to search dependencies in the script dir, and the glapi
+    # dirs
+    source_dir = node.get_dir().abspath
+    GLAPI = env.Dir('#src/mapi/glapi/gen').abspath
+    path = [source_dir, GLAPI] + sys.path
+
+    finder = modulefinder.ModuleFinder(path=path)
     finder.run_script(node.abspath)
     results = []
-    for name, mod in finder.modules.iteritems():
+    for name, mod in finder.modules.items():
         if mod.__file__ is None:
             continue
         assert os.path.exists(mod.__file__)
@@ -183,7 +189,7 @@ def _pkg_check_modules(env, name, modules):
     except OSError:
         return
     prefix = name + '_'
-    for flag_name, flag_value in flags.iteritems():
+    for flag_name, flag_value in flags.items():
         assert '_' not in flag_name
         env[prefix + flag_name] = flag_value
 
@@ -216,7 +222,7 @@ def pkg_use_modules(env, names):
             raise Exception('Attempt to use unavailable module %s' % name)
 
         flags = {}
-        for flag_name, flag_value in env.Dictionary().iteritems():
+        for flag_name, flag_value in env.Dictionary().items():
             if flag_name.startswith(prefix):
                 flag_name = flag_name[len(prefix):]
                 if '_' not in flag_name:
@@ -256,7 +262,7 @@ def parse_source_list(env, filename, names=None):
 
         symbols = names
     else:
-        symbols = sym_table.keys()
+        symbols = list(sym_table.keys())
 
     # convert the symbol table to source lists
     src_lists = {}
@@ -275,7 +281,7 @@ def parse_source_list(env, filename, names=None):
                     # cause duplicate actions.
                     f = f[len(cur_srcdir + '/'):]
                 # do not include any headers
-                if f.endswith('.h'):
+                if f.endswith(tuple(['.h','.hpp','.inl'])):
                     continue
                 srcs.append(f)
 

@@ -90,6 +90,13 @@ static pthread_mutex_t input_mutex;
 static Bool input_mutex_initialized;
 #endif
 
+int
+in_input_thread(void)
+{
+    return inputThreadInfo &&
+           pthread_equal(pthread_self(), inputThreadInfo->thread);
+}
+
 void
 input_lock(void)
 {
@@ -197,7 +204,7 @@ InputThreadRegisterDev(int fd,
 
     dev = NULL;
     xorg_list_for_each_entry(old, &inputThreadInfo->devs, node) {
-        if (old->fd == fd) {
+        if (old->fd == fd && old->state != device_state_removed) {
             dev = old;
             break;
         }
@@ -218,6 +225,9 @@ InputThreadRegisterDev(int fd,
         dev->readInputProc = readInputProc;
         dev->readInputArgs = readInputArgs;
         dev->state = device_state_added;
+
+        /* Do not prepend, so that any dev->state == device_state_removed
+         * with the same dev->fd get processed first. */
         xorg_list_append(&dev->node, &inputThreadInfo->devs);
     }
 
@@ -312,6 +322,12 @@ InputThreadDoWork(void *arg)
 
     inputThreadInfo->running = TRUE;
 
+#if defined(HAVE_PTHREAD_SETNAME_NP_WITH_TID)
+    pthread_setname_np (pthread_self(), "InputThread");
+#elif defined(HAVE_PTHREAD_SETNAME_NP_WITHOUT_TID)
+    pthread_setname_np ("InputThread");
+#endif
+
     ospoll_add(inputThreadInfo->fds, hotplugPipeRead,
                ospoll_trigger_level,
                InputThreadPipeNotify,
@@ -381,6 +397,7 @@ void
 InputThreadPreInit(void)
 {
     int fds[2], hotplugPipe[2];
+    int flags;
 
     if (!InputThreadEnable)
         return;
@@ -395,6 +412,8 @@ InputThreadPreInit(void)
     if (!inputThreadInfo)
         FatalError("input-thread: could not allocate memory");
 
+    inputThreadInfo->changed = FALSE;
+
     inputThreadInfo->thread.p = 0;
     xorg_list_init(&inputThreadInfo->devs);
     inputThreadInfo->fds = ospoll_create();
@@ -404,14 +423,32 @@ InputThreadPreInit(void)
      * in parallel.
      */
     inputThreadInfo->readPipe = fds[0];
-    fcntl(inputThreadInfo->readPipe, F_SETFL, O_NONBLOCK | O_CLOEXEC);
+    fcntl(inputThreadInfo->readPipe, F_SETFL, O_NONBLOCK);
+    flags = fcntl(inputThreadInfo->readPipe, F_GETFD);
+    if (flags != -1) {
+        flags |= FD_CLOEXEC;
+        (void)fcntl(inputThreadInfo->readPipe, F_SETFD, &flags);
+    }
     SetNotifyFd(inputThreadInfo->readPipe, InputThreadNotifyPipe, X_NOTIFY_READ, NULL);
 
     inputThreadInfo->writePipe = fds[1];
 
     hotplugPipeRead = hotplugPipe[0];
-    fcntl(hotplugPipeRead, F_SETFL, O_NONBLOCK | O_CLOEXEC);
+    fcntl(hotplugPipeRead, F_SETFL, O_NONBLOCK);
+    flags = fcntl(hotplugPipeRead, F_GETFD);
+    if (flags != -1) {
+        flags |= FD_CLOEXEC;
+        (void)fcntl(hotplugPipeRead, F_SETFD, &flags);
+    }
     hotplugPipeWrite = hotplugPipe[1];
+
+#ifndef __linux__ /* Linux does not deal well with renaming the main thread */
+#if defined(HAVE_PTHREAD_SETNAME_NP_WITH_TID)
+    pthread_setname_np (pthread_self(), "MainThread");
+#elif defined(HAVE_PTHREAD_SETNAME_NP_WITHOUT_TID)
+    pthread_setname_np ("MainThread");
+#endif
+#endif
 
 }
 
@@ -464,6 +501,7 @@ InputThreadFini(void)
 
     /* Close the pipe to get the input thread to shut down */
     close(hotplugPipeWrite);
+    input_force_unlock();
     pthread_join(inputThreadInfo->thread, NULL);
 
     xorg_list_for_each_entry_safe(dev, next, &inputThreadInfo->devs, node) {
@@ -505,6 +543,7 @@ void input_force_unlock(void) {}
 void InputThreadPreInit(void) {}
 void InputThreadInit(void) {}
 void InputThreadFini(void) {}
+int in_input_thread(void) { return 0; }
 
 int InputThreadRegisterDev(int fd,
                            NotifyFdProcPtr readInputProc,

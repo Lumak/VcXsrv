@@ -25,7 +25,7 @@
 #include "main/compiler.h"
 #include "ir.h"
 #include "compiler/glsl_types.h"
-#include "program/hash_table.h"
+#include "util/hash_table.h"
 
 ir_rvalue *
 ir_rvalue::clone(void *mem_ctx, struct hash_table *) const
@@ -68,9 +68,8 @@ ir_variable::clone(void *mem_ctx, struct hash_table *ht) const
 
    var->interface_type = this->interface_type;
 
-   if (ht) {
-      hash_table_insert(ht, var, (void *)const_cast<ir_variable *>(this));
-   }
+   if (ht)
+      _mesa_hash_table_insert(ht, (void *)const_cast<ir_variable *>(this), var);
 
    return var;
 }
@@ -161,7 +160,7 @@ ir_expression::clone(void *mem_ctx, struct hash_table *ht) const
    ir_rvalue *op[ARRAY_SIZE(this->operands)] = { NULL, };
    unsigned int i;
 
-   for (i = 0; i < get_num_operands(); i++) {
+   for (i = 0; i < num_operands; i++) {
       op[i] = this->operands[i]->clone(mem_ctx, ht);
    }
 
@@ -175,9 +174,8 @@ ir_dereference_variable::clone(void *mem_ctx, struct hash_table *ht) const
    ir_variable *new_var;
 
    if (ht) {
-      new_var = (ir_variable *)hash_table_find(ht, this->var);
-      if (!new_var)
-	 new_var = this->var;
+      hash_entry *entry = _mesa_hash_table_search(ht, this->var);
+      new_var = entry ? (ir_variable *) entry->data : this->var;
    } else {
       new_var = this->var;
    }
@@ -196,8 +194,11 @@ ir_dereference_array::clone(void *mem_ctx, struct hash_table *ht) const
 ir_dereference_record *
 ir_dereference_record::clone(void *mem_ctx, struct hash_table *ht) const
 {
+   assert(this->field_idx >= 0);
+   const char *field_name =
+      this->record->type->fields.structure[this->field_idx].name;
    return new(mem_ctx) ir_dereference_record(this->record->clone(mem_ctx, ht),
-					     this->field);
+                                             field_name);
 }
 
 ir_texture *
@@ -211,8 +212,8 @@ ir_texture::clone(void *mem_ctx, struct hash_table *ht) const
       new_tex->coordinate = this->coordinate->clone(mem_ctx, ht);
    if (this->projector)
       new_tex->projector = this->projector->clone(mem_ctx, ht);
-   if (this->shadow_comparitor) {
-      new_tex->shadow_comparitor = this->shadow_comparitor->clone(mem_ctx, ht);
+   if (this->shadow_comparator) {
+      new_tex->shadow_comparator = this->shadow_comparator->clone(mem_ctx, ht);
    }
 
    if (this->offset != NULL)
@@ -280,9 +281,10 @@ ir_function::clone(void *mem_ctx, struct hash_table *ht) const
       ir_function_signature *sig_copy = sig->clone(mem_ctx, ht);
       copy->add_signature(sig_copy);
 
-      if (ht != NULL)
-	 hash_table_insert(ht, sig_copy,
-			   (void *)const_cast<ir_function_signature *>(sig));
+      if (ht != NULL) {
+         _mesa_hash_table_insert(ht,
+               (void *)const_cast<ir_function_signature *>(sig), sig_copy);
+      }
    }
 
    return copy;
@@ -336,38 +338,31 @@ ir_constant::clone(void *mem_ctx, struct hash_table *ht) const
    case GLSL_TYPE_UINT:
    case GLSL_TYPE_INT:
    case GLSL_TYPE_FLOAT:
+   case GLSL_TYPE_FLOAT16:
    case GLSL_TYPE_DOUBLE:
    case GLSL_TYPE_BOOL:
+   case GLSL_TYPE_UINT64:
+   case GLSL_TYPE_INT64:
+   case GLSL_TYPE_UINT16:
+   case GLSL_TYPE_INT16:
+   case GLSL_TYPE_UINT8:
+   case GLSL_TYPE_INT8:
+   case GLSL_TYPE_SAMPLER:
+   case GLSL_TYPE_IMAGE:
       return new(mem_ctx) ir_constant(this->type, &this->value);
 
-   case GLSL_TYPE_STRUCT: {
-      ir_constant *c = new(mem_ctx) ir_constant;
-
-      c->type = this->type;
-      for (const exec_node *node = this->components.get_head_raw()
-	      ; !node->is_tail_sentinel()
-	      ; node = node->next) {
-	 ir_constant *const orig = (ir_constant *) node;
-
-	 c->components.push_tail(orig->clone(mem_ctx, NULL));
-      }
-
-      return c;
-   }
-
+   case GLSL_TYPE_STRUCT:
    case GLSL_TYPE_ARRAY: {
       ir_constant *c = new(mem_ctx) ir_constant;
 
       c->type = this->type;
-      c->array_elements = ralloc_array(c, ir_constant *, this->type->length);
+      c->const_elements = ralloc_array(c, ir_constant *, this->type->length);
       for (unsigned i = 0; i < this->type->length; i++) {
-	 c->array_elements[i] = this->array_elements[i]->clone(mem_ctx, NULL);
+         c->const_elements[i] = this->const_elements[i]->clone(mem_ctx, NULL);
       }
       return c;
    }
 
-   case GLSL_TYPE_SAMPLER:
-   case GLSL_TYPE_IMAGE:
    case GLSL_TYPE_ATOMIC_UINT:
    case GLSL_TYPE_VOID:
    case GLSL_TYPE_ERROR:
@@ -394,10 +389,13 @@ public:
       /* Try to find the function signature referenced by the ir_call in the
        * table.  If it is found, replace it with the value from the table.
        */
-      ir_function_signature *sig =
-	 (ir_function_signature *) hash_table_find(this->ht, ir->callee);
-      if (sig != NULL)
-	 ir->callee = sig;
+      ir_function_signature *sig;
+      hash_entry *entry = _mesa_hash_table_search(this->ht, ir->callee);
+
+      if (entry != NULL) {
+         sig = (ir_function_signature *) entry->data;
+         ir->callee = sig;
+      }
 
       /* Since this may be used before function call parameters are flattened,
        * the children also need to be processed.
@@ -422,7 +420,7 @@ void
 clone_ir_list(void *mem_ctx, exec_list *out, const exec_list *in)
 {
    struct hash_table *ht =
-      hash_table_ctor(0, hash_table_pointer_hash, hash_table_pointer_compare);
+         _mesa_hash_table_create(NULL, _mesa_hash_pointer, _mesa_key_pointer_equal);
 
    foreach_in_list(const ir_instruction, original, in) {
       ir_instruction *copy = original->clone(mem_ctx, ht);
@@ -437,5 +435,5 @@ clone_ir_list(void *mem_ctx, exec_list *out, const exec_list *in)
     */
    fixup_function_calls(ht, out);
 
-   hash_table_dtor(ht);
+   _mesa_hash_table_destroy(ht, NULL);
 }

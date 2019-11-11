@@ -77,12 +77,18 @@ static const struct dh_extra extra_group14 = {
     P14, G, lenof(P14), lenof(G),
 };
 
+static const struct ssh_kex ssh_diffiehellman_group14_sha256 = {
+    "diffie-hellman-group14-sha256", "group14",
+    KEXTYPE_DH, &ssh_sha256, &extra_group14,
+};
+
 static const struct ssh_kex ssh_diffiehellman_group14_sha1 = {
     "diffie-hellman-group14-sha1", "group14",
     KEXTYPE_DH, &ssh_sha1, &extra_group14,
 };
 
 static const struct ssh_kex *const group14_list[] = {
+    &ssh_diffiehellman_group14_sha256,
     &ssh_diffiehellman_group14_sha1
 };
 
@@ -116,6 +122,46 @@ const struct ssh_kexes ssh_diffiehellman_gex = {
 };
 
 /*
+ * Suffix on GSSAPI SSH protocol identifiers that indicates Kerberos 5
+ * as the mechanism.
+ *
+ * This suffix is the base64-encoded MD5 hash of the byte sequence
+ * 06 09 2A 86 48 86 F7 12 01 02 02, which in turn is the ASN.1 DER
+ * encoding of the object ID 1.2.840.113554.1.2.2 which designates
+ * Kerberos v5.
+ *
+ * (The same encoded OID, minus the two-byte DER header, is defined in
+ * pgssapi.c as GSS_MECH_KRB5.)
+ */
+#define GSS_KRB5_OID_HASH "toWM5Slw5Ew8Mqkay+al2g=="
+
+static const struct ssh_kex ssh_gssk5_diffiehellman_gex_sha1 = {
+    "gss-gex-sha1-" GSS_KRB5_OID_HASH, NULL,
+    KEXTYPE_GSS, &ssh_sha1, &extra_gex,
+};
+
+static const struct ssh_kex ssh_gssk5_diffiehellman_group14_sha1 = {
+    "gss-group14-sha1-" GSS_KRB5_OID_HASH, "group14",
+    KEXTYPE_GSS, &ssh_sha1, &extra_group14,
+};
+
+static const struct ssh_kex ssh_gssk5_diffiehellman_group1_sha1 = {
+    "gss-group1-sha1-" GSS_KRB5_OID_HASH, "group1",
+    KEXTYPE_GSS, &ssh_sha1, &extra_group1,
+};
+
+static const struct ssh_kex *const gssk5_sha1_kex_list[] = {
+    &ssh_gssk5_diffiehellman_gex_sha1,
+    &ssh_gssk5_diffiehellman_group14_sha1,
+    &ssh_gssk5_diffiehellman_group1_sha1
+};
+
+const struct ssh_kexes ssh_gssk5_sha1_kex = {
+    sizeof(gssk5_sha1_kex_list) / sizeof(*gssk5_sha1_kex_list),
+    gssk5_sha1_kex_list
+};
+
+/*
  * Variables.
  */
 struct dh_ctx {
@@ -132,7 +178,7 @@ static void dh_init(struct dh_ctx *ctx)
     ctx->x = ctx->e = NULL;
 }
 
-int dh_is_gex(const struct ssh_kex *kex)
+bool dh_is_gex(const struct ssh_kex *kex)
 {
     const struct dh_extra *extra = (const struct dh_extra *)kex->extra;
     return extra->pdata == NULL;
@@ -141,7 +187,7 @@ int dh_is_gex(const struct ssh_kex *kex)
 /*
  * Initialise DH for a standard group.
  */
-void *dh_setup_group(const struct ssh_kex *kex)
+struct dh_ctx *dh_setup_group(const struct ssh_kex *kex)
 {
     const struct dh_extra *extra = (const struct dh_extra *)kex->extra;
     struct dh_ctx *ctx = snew(struct dh_ctx);
@@ -154,7 +200,7 @@ void *dh_setup_group(const struct ssh_kex *kex)
 /*
  * Initialise DH for a server-supplied group.
  */
-void *dh_setup_gex(Bignum pval, Bignum gval)
+struct dh_ctx *dh_setup_gex(Bignum pval, Bignum gval)
 {
     struct dh_ctx *ctx = snew(struct dh_ctx);
     ctx->p = copybn(pval);
@@ -164,11 +210,18 @@ void *dh_setup_gex(Bignum pval, Bignum gval)
 }
 
 /*
+ * Return size of DH modulus p.
+ */
+int dh_modulus_bit_size(const struct dh_ctx *ctx)
+{
+    return bignum_bitcount(ctx->p);
+}
+
+/*
  * Clean up and free a context.
  */
-void dh_cleanup(void *handle)
+void dh_cleanup(struct dh_ctx *ctx)
 {
-    struct dh_ctx *ctx = (struct dh_ctx *)handle;
     freebn(ctx->x);
     freebn(ctx->e);
     freebn(ctx->p);
@@ -193,15 +246,14 @@ void dh_cleanup(void *handle)
  * Advances in Cryptology: Proceedings of Eurocrypt '96
  * Springer-Verlag, May 1996.
  */
-Bignum dh_create_e(void *handle, int nbits)
+Bignum dh_create_e(struct dh_ctx *ctx, int nbits)
 {
-    struct dh_ctx *ctx = (struct dh_ctx *)handle;
     int i;
 
     int nbytes;
     unsigned char *buf;
 
-    nbytes = ssh1_bignum_length(ctx->qmask);
+    nbytes = (bignum_bitcount(ctx->qmask) + 7) / 8;
     buf = snewn(nbytes, unsigned char);
 
     do {
@@ -212,10 +264,9 @@ Bignum dh_create_e(void *handle, int nbits)
 	if (ctx->x)
 	    freebn(ctx->x);
 	if (nbits == 0 || nbits > bignum_bitcount(ctx->qmask)) {
-	    ssh1_write_bignum(buf, ctx->qmask);
-	    for (i = 2; i < nbytes; i++)
-		buf[i] &= random_byte();
-	    ssh1_read_bignum(buf, nbytes, &ctx->x);   /* can't fail */
+	    for (i = 0; i < nbytes; i++)
+		buf[i] = bignum_byte(ctx->qmask, i) & random_byte();
+	    ctx->x = bignum_from_bytes(buf, nbytes);
 	} else {
 	    int b, nb;
 	    ctx->x = bn_power_2(nbits);
@@ -250,9 +301,8 @@ Bignum dh_create_e(void *handle, int nbits)
  * they lead to obviously weak keys that even a passive eavesdropper
  * can figure out.)
  */
-const char *dh_validate_f(void *handle, Bignum f)
+const char *dh_validate_f(struct dh_ctx *ctx, Bignum f)
 {
-    struct dh_ctx *ctx = (struct dh_ctx *)handle;
     if (bignum_cmp(f, One) <= 0) {
         return "f value received is too small";
     } else {
@@ -268,9 +318,8 @@ const char *dh_validate_f(void *handle, Bignum f)
 /*
  * DH stage 2: given a number f, compute K = f^x mod p.
  */
-Bignum dh_find_K(void *handle, Bignum f)
+Bignum dh_find_K(struct dh_ctx *ctx, Bignum f)
 {
-    struct dh_ctx *ctx = (struct dh_ctx *)handle;
     Bignum ret;
     ret = modpow(f, ctx->x, ctx->p);
     return ret;

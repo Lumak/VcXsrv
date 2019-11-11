@@ -235,6 +235,7 @@ winClipboardProc(Bool fUseUnicode, char *szDisplay)
     atoms.atomUTF8String = XInternAtom (pDisplay, "UTF8_STRING", False);
     atoms.atomCompoundText = XInternAtom (pDisplay, "COMPOUND_TEXT", False);
     atoms.atomTargets = XInternAtom (pDisplay, "TARGETS", False);
+    atoms.atomIncr = XInternAtom (pDisplay, "INCR", False);
 
     /* Create a messaging window */
     iWindow = XCreateSimpleWindow(pDisplay,
@@ -302,6 +303,8 @@ winClipboardProc(Bool fUseUnicode, char *szDisplay)
     }
 
     data.fUseUnicode = fUseUnicode;
+    data.incr = NULL;
+    data.incrsize = 0;
     winDebug ("winClipboardProc - Started\n");
     /* Signal that the clipboard client has started */
     g_fClipboardStarted = TRUE;
@@ -454,7 +457,7 @@ winClipboardCreateMessagingWindow(Display *pDisplay, Window iWindow, ClipboardAt
     wc.hInstance = GetModuleHandle(NULL);
     wc.hIcon = 0;
     wc.hCursor = 0;
-    wc.hbrBackground = (HBRUSH) GetStockObject(WHITE_BRUSH);
+    wc.hbrBackground = NULL;
     wc.lpszMenuName = NULL;
     wc.lpszClassName = WIN_CLIPBOARD_WINDOW_CLASS;
     wc.hIconSm = 0;
@@ -496,7 +499,10 @@ winClipboardCreateMessagingWindow(Display *pDisplay, Window iWindow, ClipboardAt
 static int
 winClipboardErrorHandler(Display * pDisplay, XErrorEvent * pErr)
 {
+    static int count = 0;
     char pszErrorMsg[100];
+
+    if (++count > 6) return 0; /* limit spam */
 
     XGetErrorText(pDisplay, pErr->error_code, pszErrorMsg, sizeof(pszErrorMsg));
     ErrorF("winClipboardErrorHandler - ERROR: \n\t%s\n"
@@ -542,7 +548,7 @@ static void
 winClipboardThreadExit(void *arg)
 {
   /* clipboard thread has exited, stop server as well */
-  AbortDDX(EXIT_ERR_ABORT);
+  ddxGiveUp(EXIT_ERR_ABORT);
   TerminateProcess(GetCurrentProcess(),1);
 }
 

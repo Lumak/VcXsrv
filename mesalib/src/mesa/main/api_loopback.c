@@ -89,6 +89,8 @@
 #define ATTRIB3_D(index,x,y,z)     CALL_VertexAttribL3d(GET_DISPATCH(), (index,x,y,z))
 #define ATTRIB4_D(index,x,y,z,w)    CALL_VertexAttribL4d(GET_DISPATCH(), (index,x,y,z,w))
 
+#define ATTRIB1_UI64(index, x)     CALL_VertexAttribL1ui64ARB(GET_DISPATCH(), (index, x))
+
 void GLAPIENTRY
 _mesa_Color3b( GLbyte red, GLbyte green, GLbyte blue )
 {
@@ -865,8 +867,9 @@ _mesa_Materialf( GLenum face, GLenum pname, GLfloat param )
 void GLAPIENTRY
 _mesa_Materiali(GLenum face, GLenum pname, GLint param )
 {
-   GLfloat p = (GLfloat) param;
-   MATERIALFV(face, pname, &p);
+   GLfloat p[4];
+   p[0] = (GLfloat) param;
+   MATERIALFV(face, pname, p);
 }
 
 void GLAPIENTRY
@@ -1528,6 +1531,18 @@ _mesa_VertexAttribL1dv(GLuint index, const GLdouble *v)
 }
 
 void GLAPIENTRY
+_mesa_VertexAttribL1ui64ARB(GLuint index, GLuint64EXT x)
+{
+   ATTRIB1_UI64(index, x);
+}
+
+void GLAPIENTRY
+_mesa_VertexAttribL1ui64vARB(GLuint index, const GLuint64EXT *v)
+{
+   ATTRIB1_UI64(index, v[0]);
+}
+
+void GLAPIENTRY
 _mesa_VertexAttribL2dv(GLuint index, const GLdouble *v)
 {
    ATTRIB2_D(index, v[0], v[1]);
@@ -1775,18 +1790,5 @@ _mesa_loopback_init_api_table(const struct gl_context *ctx,
       SET_VertexAttribI4sv(dest, _mesa_VertexAttribI4sv);
       SET_VertexAttribI4ubv(dest, _mesa_VertexAttribI4ubv);
       SET_VertexAttribI4usv(dest, _mesa_VertexAttribI4usv);
-   }
-
-   if (ctx->API == API_OPENGL_CORE) {
-      /* GL 4.1 / GL_ARB_vertex_attrib_64bit */
-      SET_VertexAttribL1d(dest, _mesa_VertexAttribL1d);
-      SET_VertexAttribL2d(dest, _mesa_VertexAttribL2d);
-      SET_VertexAttribL3d(dest, _mesa_VertexAttribL3d);
-      SET_VertexAttribL4d(dest, _mesa_VertexAttribL4d);
-
-      SET_VertexAttribL1dv(dest, _mesa_VertexAttribL1dv);
-      SET_VertexAttribL2dv(dest, _mesa_VertexAttribL2dv);
-      SET_VertexAttribL3dv(dest, _mesa_VertexAttribL3dv);
-      SET_VertexAttribL4dv(dest, _mesa_VertexAttribL4dv);
    }
 }

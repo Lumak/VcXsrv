@@ -16,15 +16,19 @@
  *  along with vcxsrv.  If not, see <http://www.gnu.org/licenses/>.
 */
 ;--------------------------------
+!define NAME "VcXsrv"
+!define VERSION "1.20.1.4"
 
 ; The name of the installer
-Name "VcXsrv"
+Name "${NAME}"
 
 ; The file to write
-OutFile "vcxsrv-debug.1.18.3.0.installer.exe"
+OutFile "vcxsrv-debug.${VERSION}.installer.exe"
 
 ; The default installation directory
 InstallDir $PROGRAMFILES32\VcXsrv
+
+SetCompressor /SOLID lzma
 
 ; Registry key to check for directory (so if you install again, it will
 ; overwrite the old one automatically)
@@ -32,11 +36,11 @@ InstallDirRegKey HKLM SOFTWARE\VcXsrv "Install_Dir"
 
 LoadLanguageFile "${NSISDIR}\Contrib\Language files\English.nlf"
 
-VIProductVersion "1.18.3.0"
-VIAddVersionKey /LANG=${LANG_ENGLISH} "ProductName" "VcXsrv"
+VIProductVersion "${VERSION}"
+VIAddVersionKey /LANG=${LANG_ENGLISH} "ProductName" "${NAME}"
 VIAddVersionKey /LANG=${LANG_ENGLISH} "FileDescription" "VcXsrv windows xserver"
-VIAddVersionKey /LANG=${LANG_ENGLISH} "FileVersion" "1.18.3.0"
-VIAddVersionKey /LANG=${LANG_ENGLISH} "ProductVersion" "1.18.3.0"
+VIAddVersionKey /LANG=${LANG_ENGLISH} "FileVersion" "${VERSION}"
+VIAddVersionKey /LANG=${LANG_ENGLISH} "ProductVersion" "${VERSION}"
 
 ; Request application privileges for Windows Vista
 RequestExecutionLevel admin
@@ -93,7 +97,7 @@ Section "VcXsrv debug exe and dlls"
   File "..\..\apps\xwininfo\obj\debug\xwininfo.exe"
   File "..\hw\xwin\xlaunch\obj\debug\xlaunch.exe"
   File "..\..\tools\plink\obj\debug\plink.exe"
-  File "..\..\mesalib\windows\VC8\mesa\Win32\Debug\swrast_dri.dll"
+  File "..\..\mesalib\src\obj\debug\swrast_dri.dll"
   File "..\hw\xwin\swrastwgl_dri\obj\debug\swrastwgl_dri.dll"
   File "..\..\dxtn\obj\debug\dxtn.dll"
   File "..\..\zlib\obj\debug\zlib1.dll"
@@ -102,6 +106,7 @@ Section "VcXsrv debug exe and dlls"
   File "..\..\libX11\obj\debug\libX11.dll"
   File "..\..\libXext\src\obj\debug\libXext.dll"
   File "..\..\libXmu\src\obj\debug\libXmu.dll"
+  File "..\..\openssl\debug32\libcrypto-1_1.dll"
   File "vcruntime140d.dll"
   File "msvcp140d.dll"
 

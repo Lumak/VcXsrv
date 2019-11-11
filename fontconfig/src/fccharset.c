@@ -274,7 +274,7 @@ FcCharSetAddChar (FcCharSet *fcs, FcChar32 ucs4)
     if (!leaf)
 	return FcFalse;
     b = &leaf->map[(ucs4 & 0xff) >> 5];
-    *b |= (1 << (ucs4 & 0x1f));
+    *b |= (1U << (ucs4 & 0x1f));
     return FcTrue;
 }
 
@@ -290,7 +290,7 @@ FcCharSetDelChar (FcCharSet *fcs, FcChar32 ucs4)
     if (!leaf)
 	return FcTrue;
     b = &leaf->map[(ucs4 & 0xff) >> 5];
-    *b &= ~(1 << (ucs4 & 0x1f));
+    *b &= ~(1U << (ucs4 & 0x1f));
     /* We don't bother removing the leaf if it's empty */
     return FcTrue;
 }
@@ -594,7 +594,7 @@ FcCharSetHasChar (const FcCharSet *fcs, FcChar32 ucs4)
     leaf = FcCharSetFindLeaf (fcs, ucs4);
     if (!leaf)
 	return FcFalse;
-    return (leaf->map[(ucs4 & 0xff) >> 5] & (1 << (ucs4 & 0x1f))) != 0;
+    return (leaf->map[(ucs4 & 0xff) >> 5] & (1U << (ucs4 & 0x1f))) != 0;
 }
 
 static FcChar32
@@ -1113,14 +1113,14 @@ FcCharSetHash (FcCharSet *fcs)
 	hash = ((hash << 1) | (hash >> 31)) ^ FcCharLeafHash (FcCharSetLeaf(fcs,i));
     /* hash in numbers */
     for (i = 0; i < fcs->num; i++)
-	hash = ((hash << 1) | (hash >> 31)) ^ *FcCharSetNumbers(fcs);
+	hash = ((hash << 1) | (hash >> 31)) ^ FcCharSetNumbers(fcs)[i];
     return hash;
 }
 
 static FcBool
 FcCharSetFreezeOrig (FcCharSetFreezer *freezer, const FcCharSet *orig, const FcCharSet *frozen)
 {
-    FcCharSetOrigEnt	**bucket = &freezer->orig_hash_table[((uintptr_t) orig) & FC_CHAR_SET_HASH_SIZE];
+    FcCharSetOrigEnt	**bucket = &freezer->orig_hash_table[((uintptr_t) orig) % FC_CHAR_SET_HASH_SIZE];
     FcCharSetOrigEnt	*ent;
 
     ent = malloc (sizeof (FcCharSetOrigEnt));
@@ -1204,7 +1204,7 @@ FcCharSetFreezeBase (FcCharSetFreezer *freezer, FcCharSet *fcs)
 static const FcCharSet *
 FcCharSetFindFrozen (FcCharSetFreezer *freezer, const FcCharSet *orig)
 {
-    FcCharSetOrigEnt    **bucket = &freezer->orig_hash_table[((uintptr_t) orig) & FC_CHAR_SET_HASH_SIZE];
+    FcCharSetOrigEnt    **bucket = &freezer->orig_hash_table[((uintptr_t) orig) % FC_CHAR_SET_HASH_SIZE];
     FcCharSetOrigEnt	*ent;
 
     for (ent = *bucket; ent; ent = ent->next)

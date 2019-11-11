@@ -40,6 +40,7 @@
 #include "framebuffer.h"
 #include "samplerobj.h"
 #include "stencil.h"
+#include "version.h"
 
 /* This is a table driven implemetation of the glGet*v() functions.
  * The basic idea is that most getters just look up an int somewhere
@@ -95,10 +96,17 @@ enum value_type {
    TYPE_INT_3,
    TYPE_INT_4,
    TYPE_INT_N,
+   TYPE_UINT,
+   TYPE_UINT_2,
+   TYPE_UINT_3,
+   TYPE_UINT_4,
    TYPE_INT64,
+   TYPE_ENUM16,
    TYPE_ENUM,
    TYPE_ENUM_2,
    TYPE_BOOLEAN,
+   TYPE_UBYTE,
+   TYPE_SHORT,
    TYPE_BIT_0,
    TYPE_BIT_1,
    TYPE_BIT_2,
@@ -137,12 +145,14 @@ enum value_extra {
    EXTRA_VERSION_31,
    EXTRA_VERSION_32,
    EXTRA_VERSION_40,
+   EXTRA_VERSION_43,
    EXTRA_API_GL,
    EXTRA_API_GL_CORE,
    EXTRA_API_ES2,
    EXTRA_API_ES3,
    EXTRA_API_ES31,
-   EXTRA_NEW_BUFFERS, 
+   EXTRA_API_ES32,
+   EXTRA_NEW_BUFFERS,
    EXTRA_NEW_FRAG_CLAMP,
    EXTRA_VALID_DRAW_BUFFER,
    EXTRA_VALID_TEXTURE_UNIT,
@@ -157,6 +167,7 @@ enum value_extra {
    EXTRA_EXT_SSBO_GS,
    EXTRA_EXT_FB_NO_ATTACH_GS,
    EXTRA_EXT_ES_GS,
+   EXTRA_EXT_PROVOKING_VERTEX_32,
 };
 
 #define NO_EXTRA NULL
@@ -179,6 +190,9 @@ union value {
    GLint value_int_4[4];
    GLint64 value_int64;
    GLenum value_enum;
+   GLubyte value_ubyte;
+   GLshort value_short;
+   GLuint value_uint;
 
    /* Sigh, see GL_COMPRESSED_TEXTURE_FORMATS_ARB handling */
    struct {
@@ -199,11 +213,14 @@ union value {
 
 #define BUFFER_INT(field) BUFFER_FIELD(field, TYPE_INT)
 #define BUFFER_ENUM(field) BUFFER_FIELD(field, TYPE_ENUM)
+#define BUFFER_ENUM16(field) BUFFER_FIELD(field, TYPE_ENUM16)
 #define BUFFER_BOOL(field) BUFFER_FIELD(field, TYPE_BOOLEAN)
 
 #define CONTEXT_INT(field) CONTEXT_FIELD(field, TYPE_INT)
 #define CONTEXT_INT2(field) CONTEXT_FIELD(field, TYPE_INT_2)
 #define CONTEXT_INT64(field) CONTEXT_FIELD(field, TYPE_INT64)
+#define CONTEXT_UINT(field) CONTEXT_FIELD(field, TYPE_UINT)
+#define CONTEXT_ENUM16(field) CONTEXT_FIELD(field, TYPE_ENUM16)
 #define CONTEXT_ENUM(field) CONTEXT_FIELD(field, TYPE_ENUM)
 #define CONTEXT_ENUM2(field) CONTEXT_FIELD(field, TYPE_ENUM_2)
 #define CONTEXT_BOOL(field) CONTEXT_FIELD(field, TYPE_BOOLEAN)
@@ -223,9 +240,13 @@ union value {
 #define CONTEXT_MATRIX(field) CONTEXT_FIELD(field, TYPE_MATRIX)
 #define CONTEXT_MATRIX_T(field) CONTEXT_FIELD(field, TYPE_MATRIX_T)
 
+/* Vertex array fields */
 #define ARRAY_INT(field) ARRAY_FIELD(field, TYPE_INT)
 #define ARRAY_ENUM(field) ARRAY_FIELD(field, TYPE_ENUM)
+#define ARRAY_ENUM16(field) ARRAY_FIELD(field, TYPE_ENUM16)
 #define ARRAY_BOOL(field) ARRAY_FIELD(field, TYPE_BOOLEAN)
+#define ARRAY_UBYTE(field) ARRAY_FIELD(field, TYPE_UBYTE)
+#define ARRAY_SHORT(field) ARRAY_FIELD(field, TYPE_SHORT)
 
 #define EXT(f)					\
    offsetof(struct gl_extensions, f)
@@ -301,8 +322,6 @@ static const int extra_GLSL_130_es3[] = {
 };
 
 static const int extra_texture_buffer_object[] = {
-   EXTRA_API_GL_CORE,
-   EXTRA_VERSION_31,
    EXT(ARB_texture_buffer_object),
    EXTRA_END
 };
@@ -404,6 +423,12 @@ static const int extra_ARB_viewport_array_or_oes_geometry_shader[] = {
    EXTRA_END
 };
 
+static const int extra_ARB_viewport_array_or_oes_viewport_array[] = {
+   EXT(ARB_viewport_array),
+   EXT(OES_viewport_array),
+   EXTRA_END
+};
+
 static const int extra_ARB_gpu_shader5_or_oes_geometry_shader[] = {
    EXT(ARB_gpu_shader5),
    EXTRA_EXT_ES_GS,
@@ -416,6 +441,24 @@ static const int extra_ARB_gpu_shader5_or_OES_sample_variables[] = {
    EXTRA_END
 };
 
+static const int extra_ES32[] = {
+   EXT(ARB_ES3_2_compatibility),
+   EXTRA_API_ES32,
+   EXTRA_END
+};
+
+static const int extra_KHR_robustness_or_GL[] = {
+   EXT(KHR_robustness),
+   EXTRA_API_GL,
+   EXTRA_API_GL_CORE,
+   EXTRA_END
+};
+
+static const int extra_INTEL_conservative_rasterization[] = {
+   EXT(INTEL_conservative_rasterization),
+   EXTRA_END
+};
+
 EXTRA_EXT(ARB_texture_cube_map);
 EXTRA_EXT(EXT_texture_array);
 EXTRA_EXT(NV_fog_distance);
@@ -425,6 +468,7 @@ EXTRA_EXT(NV_texture_rectangle);
 EXTRA_EXT(EXT_stencil_two_side);
 EXTRA_EXT(EXT_depth_bounds_test);
 EXTRA_EXT(ARB_depth_clamp);
+EXTRA_EXT(AMD_depth_clamp_separate);
 EXTRA_EXT(ATI_fragment_shader);
 EXTRA_EXT(EXT_provoking_vertex);
 EXTRA_EXT(ARB_fragment_shader);
@@ -452,16 +496,14 @@ EXTRA_EXT(ARB_texture_gather);
 EXTRA_EXT(ARB_shader_atomic_counters);
 EXTRA_EXT(ARB_draw_indirect);
 EXTRA_EXT(ARB_shader_image_load_store);
-EXTRA_EXT(ARB_viewport_array);
 EXTRA_EXT(ARB_query_buffer_object);
 EXTRA_EXT2(ARB_transform_feedback3, ARB_gpu_shader5);
 EXTRA_EXT(INTEL_performance_query);
 EXTRA_EXT(ARB_explicit_uniform_location);
 EXTRA_EXT(ARB_clip_control);
-EXTRA_EXT(EXT_polygon_offset_clamp);
+EXTRA_EXT(ARB_polygon_offset_clamp);
 EXTRA_EXT(ARB_framebuffer_no_attachments);
 EXTRA_EXT(ARB_tessellation_shader);
-EXTRA_EXT(ARB_shader_subroutine);
 EXTRA_EXT(ARB_shader_storage_buffer_object);
 EXTRA_EXT(ARB_indirect_parameters);
 EXTRA_EXT(ATI_meminfo);
@@ -470,6 +512,14 @@ EXTRA_EXT(ARB_cull_distance);
 EXTRA_EXT(EXT_window_rectangles);
 EXTRA_EXT(KHR_blend_equation_advanced_coherent);
 EXTRA_EXT(OES_primitive_bounding_box);
+EXTRA_EXT(ARB_compute_variable_group_size);
+EXTRA_EXT(KHR_robustness);
+EXTRA_EXT(ARB_sparse_buffer);
+EXTRA_EXT(NV_conservative_raster);
+EXTRA_EXT(NV_conservative_raster_dilate);
+EXTRA_EXT(NV_conservative_raster_pre_snap_triangles);
+EXTRA_EXT(ARB_sample_locations);
+EXTRA_EXT(AMD_framebuffer_multisample_advanced);
 
 static const int
 extra_ARB_color_buffer_float_or_glcore[] = {
@@ -487,6 +537,7 @@ extra_NV_primitive_restart[] = {
 static const int extra_version_30[] = { EXTRA_VERSION_30, EXTRA_END };
 static const int extra_version_31[] = { EXTRA_VERSION_31, EXTRA_END };
 static const int extra_version_32[] = { EXTRA_VERSION_32, EXTRA_END };
+static const int extra_version_43[] = { EXTRA_VERSION_43, EXTRA_END };
 
 static const int extra_gl30_es3[] = {
     EXTRA_VERSION_30,
@@ -538,9 +589,22 @@ static const int extra_core_ARB_color_buffer_float_and_new_buffers[] = {
 static const int extra_EXT_shader_framebuffer_fetch[] = {
    EXTRA_API_ES2,
    EXTRA_API_ES3,
-   EXT(MESA_shader_framebuffer_fetch),
+   EXT(EXT_shader_framebuffer_fetch),
    EXTRA_END
 };
+
+static const int extra_EXT_provoking_vertex_32[] = {
+   EXTRA_EXT_PROVOKING_VERTEX_32,
+   EXTRA_END
+};
+
+static const int extra_EXT_disjoint_timer_query[] = {
+   EXTRA_API_ES2,
+   EXTRA_API_ES3,
+   EXT(EXT_disjoint_timer_query),
+   EXTRA_END
+};
+
 
 /* This is the big table describing all the enums we accept in
  * glGet*v().  The table is partitioned into six parts: enums
@@ -586,7 +650,7 @@ static void
 find_custom_value(struct gl_context *ctx, const struct value_desc *d, union value *v)
 {
    struct gl_buffer_object **buffer_obj;
-   struct gl_vertex_attrib_array *array;
+   struct gl_array_attributes *array;
    GLuint unit, *p;
 
    switch (d->pname) {
@@ -629,10 +693,14 @@ find_custom_value(struct gl_context *ctx, const struct value_desc *d, union valu
       break;
 
    case GL_COLOR_WRITEMASK:
-      v->value_int_4[0] = ctx->Color.ColorMask[0][RCOMP] ? 1 : 0;
-      v->value_int_4[1] = ctx->Color.ColorMask[0][GCOMP] ? 1 : 0;
-      v->value_int_4[2] = ctx->Color.ColorMask[0][BCOMP] ? 1 : 0;
-      v->value_int_4[3] = ctx->Color.ColorMask[0][ACOMP] ? 1 : 0;
+      v->value_int_4[0] = GET_COLORMASK_BIT(ctx->Color.ColorMask, 0, 0);
+      v->value_int_4[1] = GET_COLORMASK_BIT(ctx->Color.ColorMask, 0, 1);
+      v->value_int_4[2] = GET_COLORMASK_BIT(ctx->Color.ColorMask, 0, 2);
+      v->value_int_4[3] = GET_COLORMASK_BIT(ctx->Color.ColorMask, 0, 3);
+      break;
+
+   case GL_DEPTH_CLAMP:
+      v->value_bool = ctx->Transform.DepthClampNear || ctx->Transform.DepthClampFar;
       break;
 
    case GL_EDGE_FLAG:
@@ -699,15 +767,15 @@ find_custom_value(struct gl_context *ctx, const struct value_desc *d, union valu
 
    case GL_LIST_INDEX:
       v->value_int =
-	 ctx->ListState.CurrentList ? ctx->ListState.CurrentList->Name : 0;
+         ctx->ListState.CurrentList ? ctx->ListState.CurrentList->Name : 0;
       break;
    case GL_LIST_MODE:
       if (!ctx->CompileFlag)
-	 v->value_enum = 0;
+         v->value_enum = 0;
       else if (ctx->ExecuteFlag)
-	 v->value_enum = GL_COMPILE_AND_EXECUTE;
+         v->value_enum = GL_COMPILE_AND_EXECUTE;
       else
-	 v->value_enum = GL_COMPILE;
+         v->value_enum = GL_COMPILE;
       break;
 
    case GL_VIEWPORT:
@@ -756,10 +824,10 @@ find_custom_value(struct gl_context *ctx, const struct value_desc *d, union valu
       break;
 
    case GL_IMPLEMENTATION_COLOR_READ_TYPE_OES:
-      v->value_int = _mesa_get_color_read_type(ctx);
+      v->value_int = _mesa_get_color_read_type(ctx, NULL, "glGetIntegerv");
       break;
    case GL_IMPLEMENTATION_COLOR_READ_FORMAT_OES:
-      v->value_int = _mesa_get_color_read_format(ctx);
+      v->value_int = _mesa_get_color_read_format(ctx, NULL, "glGetIntegerv");
       break;
 
    case GL_CURRENT_MATRIX_STACK_DEPTH_ARB:
@@ -774,8 +842,8 @@ find_custom_value(struct gl_context *ctx, const struct value_desc *d, union valu
       v->value_int = _mesa_get_compressed_formats(ctx, NULL);
       break;
    case GL_COMPRESSED_TEXTURE_FORMATS_ARB:
-      v->value_int_n.n = 
-	 _mesa_get_compressed_formats(ctx, v->value_int_n.ints);
+      v->value_int_n.n =
+         _mesa_get_compressed_formats(ctx, v->value_int_n.ints);
       assert(v->value_int_n.n <= (int) ARRAY_SIZE(v->value_int_n.ints));
       break;
 
@@ -798,7 +866,15 @@ find_custom_value(struct gl_context *ctx, const struct value_desc *d, union valu
    case GL_TEXTURE_BINDING_2D_MULTISAMPLE_ARRAY:
       unit = ctx->Texture.CurrentUnit;
       v->value_int =
-	 ctx->Texture.Unit[unit].CurrentTex[d->offset]->Name;
+         ctx->Texture.Unit[unit].CurrentTex[d->offset]->Name;
+      break;
+
+   /* GL_EXT_external_objects */
+   case GL_DRIVER_UUID_EXT:
+      _mesa_get_driver_uuid(ctx, v->value_int_4);
+      break;
+   case GL_DEVICE_UUID_EXT:
+      _mesa_get_device_uuid(ctx, v->value_int_4);
       break;
 
    /* GL_EXT_packed_float */
@@ -849,7 +925,7 @@ find_custom_value(struct gl_context *ctx, const struct value_desc *d, union valu
    case GL_SECONDARY_COLOR_ARRAY_BUFFER_BINDING_ARB:
    case GL_FOG_COORDINATE_ARRAY_BUFFER_BINDING_ARB:
       buffer_obj = (struct gl_buffer_object **)
-	 ((char *) ctx->Array.VAO + d->offset);
+         ((char *) ctx->Array.VAO + d->offset);
       v->value_int = (*buffer_obj)->Name;
       break;
    case GL_ARRAY_BUFFER_BINDING_ARB:
@@ -857,7 +933,7 @@ find_custom_value(struct gl_context *ctx, const struct value_desc *d, union valu
       break;
    case GL_TEXTURE_COORD_ARRAY_BUFFER_BINDING_ARB:
       v->value_int =
-	 ctx->Array.VAO->VertexBinding[VERT_ATTRIB_TEX(ctx->Array.ActiveTexture)].BufferObj->Name;
+         ctx->Array.VAO->BufferBinding[VERT_ATTRIB_TEX(ctx->Array.ActiveTexture)].BufferObj->Name;
       break;
    case GL_ELEMENT_ARRAY_BUFFER_BINDING_ARB:
       v->value_int = ctx->Array.VAO->IndexBufferObj->Name;
@@ -913,17 +989,17 @@ find_custom_value(struct gl_context *ctx, const struct value_desc *d, union valu
        *                         the last program set by UseProgram (bug 7822).
        */
       v->value_int =
-	 ctx->Shader.ActiveProgram ? ctx->Shader.ActiveProgram->Name : 0;
+         ctx->Shader.ActiveProgram ? ctx->Shader.ActiveProgram->Name : 0;
       break;
    case GL_READ_FRAMEBUFFER_BINDING_EXT:
       v->value_int = ctx->ReadBuffer->Name;
       break;
    case GL_RENDERBUFFER_BINDING_EXT:
       v->value_int =
-	 ctx->CurrentRenderbuffer ? ctx->CurrentRenderbuffer->Name : 0;
+         ctx->CurrentRenderbuffer ? ctx->CurrentRenderbuffer->Name : 0;
       break;
    case GL_POINT_SIZE_ARRAY_BUFFER_BINDING_OES:
-      v->value_int = ctx->Array.VAO->VertexBinding[VERT_ATTRIB_POINT_SIZE].BufferObj->Name;
+      v->value_int = ctx->Array.VAO->BufferBinding[VERT_ATTRIB_POINT_SIZE].BufferObj->Name;
       break;
 
    case GL_FOG_COLOR:
@@ -1028,6 +1104,10 @@ find_custom_value(struct gl_context *ctx, const struct value_desc *d, union valu
          v->value_int = 0;
       }
       break;
+   /* GL 4.3 */
+   case GL_NUM_SHADING_LANGUAGE_VERSIONS:
+      v->value_int = _mesa_get_shading_language_version(ctx, -1, NULL);
+      break;
    /* GL_ARB_draw_indirect */
    case GL_DRAW_INDIRECT_BUFFER_BINDING:
       v->value_int = ctx->DrawIndirectBuffer->Name;
@@ -1054,6 +1134,10 @@ find_custom_value(struct gl_context *ctx, const struct value_desc *d, union valu
       break;
    case GL_SAMPLE_BUFFERS:
       v->value_int = _mesa_geometric_samples(ctx->DrawBuffer) > 0;
+      break;
+   /* GL_EXT_textrue_integer */
+   case GL_RGBA_INTEGER_MODE_EXT:
+      v->value_int = (ctx->DrawBuffer->_IntegerBuffers != 0);
       break;
    /* GL_ATI_meminfo & GL_NVX_gpu_memory_info */
    case GL_VBO_FREE_MEMORY_ATI:
@@ -1102,6 +1186,61 @@ find_custom_value(struct gl_context *ctx, const struct value_desc *d, union valu
          }
       }
       break;
+
+   /* GL_ARB_get_program_binary */
+   case GL_PROGRAM_BINARY_FORMATS:
+      assert(ctx->Const.NumProgramBinaryFormats <= 1);
+      v->value_int_n.n = MIN2(ctx->Const.NumProgramBinaryFormats, 1);
+      if (ctx->Const.NumProgramBinaryFormats > 0) {
+         v->value_int_n.ints[0] = GL_PROGRAM_BINARY_FORMAT_MESA;
+      }
+      break;
+   /* GL_EXT_disjoint_timer_query */
+   case GL_GPU_DISJOINT_EXT:
+      {
+         simple_mtx_lock(&ctx->Shared->Mutex);
+         v->value_int = ctx->Shared->DisjointOperation;
+         /* Reset state as expected by the spec. */
+         ctx->Shared->DisjointOperation = false;
+         simple_mtx_unlock(&ctx->Shared->Mutex);
+      }
+      break;
+   /* GL_ARB_sample_locations */
+   case GL_SAMPLE_LOCATION_SUBPIXEL_BITS_ARB:
+   case GL_SAMPLE_LOCATION_PIXEL_GRID_WIDTH_ARB:
+   case GL_SAMPLE_LOCATION_PIXEL_GRID_HEIGHT_ARB:
+      {
+         GLuint bits, width, height;
+
+         if (ctx->NewState & _NEW_BUFFERS)
+            _mesa_update_state(ctx);
+
+         if (ctx->DrawBuffer->_Status != GL_FRAMEBUFFER_COMPLETE) {
+            v->value_uint = 0;
+            break;
+         }
+
+         ctx->Driver.GetProgrammableSampleCaps(ctx, ctx->DrawBuffer,
+                                               &bits, &width, &height);
+
+         if (d->pname == GL_SAMPLE_LOCATION_PIXEL_GRID_WIDTH_ARB)
+            v->value_uint = width;
+         else if (d->pname == GL_SAMPLE_LOCATION_PIXEL_GRID_HEIGHT_ARB)
+            v->value_uint = height;
+         else
+            v->value_uint = bits;
+      }
+      break;
+   case GL_PROGRAMMABLE_SAMPLE_LOCATION_TABLE_SIZE_ARB:
+      v->value_uint = MAX_SAMPLE_LOCATION_TABLE_SIZE;
+      break;
+
+   /* GL_AMD_framebuffer_multisample_advanced */
+   case GL_SUPPORTED_MULTISAMPLE_MODES_AMD:
+      v->value_int_n.n = ctx->Const.NumSupportedMultisampleModes * 3;
+      memcpy(v->value_int_n.ints, ctx->Const.SupportedMultisampleModes,
+             v->value_int_n.n * sizeof(GLint));
+      break;
    }
 }
 
@@ -1134,17 +1273,27 @@ check_extra(struct gl_context *ctx, const char *func, const struct value_desc *d
          api_check = GL_TRUE;
          if (version >= 30)
             api_found = GL_TRUE;
-	 break;
+         break;
       case EXTRA_VERSION_31:
          api_check = GL_TRUE;
          if (version >= 31)
             api_found = GL_TRUE;
-	 break;
+         break;
       case EXTRA_VERSION_32:
          api_check = GL_TRUE;
          if (version >= 32)
             api_found = GL_TRUE;
-	 break;
+         break;
+      case EXTRA_VERSION_40:
+         api_check = GL_TRUE;
+         if (version >= 40)
+            api_found = GL_TRUE;
+         break;
+      case EXTRA_VERSION_43:
+         api_check = TRUE;
+         if (_mesa_is_desktop_gl(ctx) && version >= 43)
+            api_found = GL_TRUE;
+         break;
       case EXTRA_NEW_FRAG_CLAMP:
          if (ctx->NewState & (_NEW_BUFFERS | _NEW_FRAG_CLAMP))
             _mesa_update_state(ctx);
@@ -1153,60 +1302,65 @@ check_extra(struct gl_context *ctx, const char *func, const struct value_desc *d
          api_check = GL_TRUE;
          if (ctx->API == API_OPENGLES2)
             api_found = GL_TRUE;
-	 break;
+         break;
       case EXTRA_API_ES3:
          api_check = GL_TRUE;
          if (_mesa_is_gles3(ctx))
             api_found = GL_TRUE;
-	 break;
+         break;
       case EXTRA_API_ES31:
          api_check = GL_TRUE;
          if (_mesa_is_gles31(ctx))
             api_found = GL_TRUE;
-	 break;
+         break;
+      case EXTRA_API_ES32:
+         api_check = GL_TRUE;
+         if (_mesa_is_gles32(ctx))
+            api_found = GL_TRUE;
+         break;
       case EXTRA_API_GL:
          api_check = GL_TRUE;
          if (_mesa_is_desktop_gl(ctx))
             api_found = GL_TRUE;
-	 break;
+         break;
       case EXTRA_API_GL_CORE:
          api_check = GL_TRUE;
          if (ctx->API == API_OPENGL_CORE)
             api_found = GL_TRUE;
-	 break;
+         break;
       case EXTRA_NEW_BUFFERS:
-	 if (ctx->NewState & _NEW_BUFFERS)
-	    _mesa_update_state(ctx);
-	 break;
+         if (ctx->NewState & _NEW_BUFFERS)
+            _mesa_update_state(ctx);
+         break;
       case EXTRA_FLUSH_CURRENT:
-	 FLUSH_CURRENT(ctx, 0);
-	 break;
+         FLUSH_CURRENT(ctx, 0);
+         break;
       case EXTRA_VALID_DRAW_BUFFER:
-	 if (d->pname - GL_DRAW_BUFFER0_ARB >= ctx->Const.MaxDrawBuffers) {
-	    _mesa_error(ctx, GL_INVALID_OPERATION, "%s(draw buffer %u)",
-			func, d->pname - GL_DRAW_BUFFER0_ARB);
-	    return GL_FALSE;
-	 }
-	 break;
+         if (d->pname - GL_DRAW_BUFFER0_ARB >= ctx->Const.MaxDrawBuffers) {
+            _mesa_error(ctx, GL_INVALID_OPERATION, "%s(draw buffer %u)",
+                        func, d->pname - GL_DRAW_BUFFER0_ARB);
+            return GL_FALSE;
+         }
+         break;
       case EXTRA_VALID_TEXTURE_UNIT:
-	 if (ctx->Texture.CurrentUnit >= ctx->Const.MaxTextureCoordUnits) {
-	    _mesa_error(ctx, GL_INVALID_OPERATION, "%s(texture %u)",
-			func, ctx->Texture.CurrentUnit);
-	    return GL_FALSE;
-	 }
-	 break;
+         if (ctx->Texture.CurrentUnit >= ctx->Const.MaxTextureCoordUnits) {
+            _mesa_error(ctx, GL_INVALID_OPERATION, "%s(texture %u)",
+                        func, ctx->Texture.CurrentUnit);
+            return GL_FALSE;
+         }
+         break;
       case EXTRA_VALID_CLIP_DISTANCE:
-	 if (d->pname - GL_CLIP_DISTANCE0 >= ctx->Const.MaxClipPlanes) {
-	    _mesa_error(ctx, GL_INVALID_ENUM, "%s(clip distance %u)",
-			func, d->pname - GL_CLIP_DISTANCE0);
-	    return GL_FALSE;
-	 }
-	 break;
+         if (d->pname - GL_CLIP_DISTANCE0 >= ctx->Const.MaxClipPlanes) {
+            _mesa_error(ctx, GL_INVALID_ENUM, "%s(clip distance %u)",
+                        func, d->pname - GL_CLIP_DISTANCE0);
+            return GL_FALSE;
+         }
+         break;
       case EXTRA_GLSL_130:
          api_check = GL_TRUE;
          if (ctx->Const.GLSLVersion >= 130)
             api_found = GL_TRUE;
-	 break;
+         break;
       case EXTRA_EXT_UBO_GS:
          api_check = GL_TRUE;
          if (ctx->Extensions.ARB_uniform_buffer_object &&
@@ -1253,13 +1407,18 @@ check_extra(struct gl_context *ctx, const char *func, const struct value_desc *d
          if (_mesa_has_OES_geometry_shader(ctx))
             api_found = GL_TRUE;
          break;
+      case EXTRA_EXT_PROVOKING_VERTEX_32:
+         api_check = TRUE;
+         if (ctx->API == API_OPENGL_COMPAT || version == 32)
+            api_found = ctx->Extensions.EXT_provoking_vertex;
+         break;
       case EXTRA_END:
-	 break;
+         break;
       default: /* *e is a offset into the extension struct */
-	 api_check = GL_TRUE;
-	 if (*(GLboolean *) ((char *) &ctx->Extensions + *e))
-	    api_found = GL_TRUE;
-	 break;
+         api_check = GL_TRUE;
+         if (*(GLboolean *) ((char *) &ctx->Extensions + *e))
+            api_found = GL_TRUE;
+         break;
       }
    }
 
@@ -1277,7 +1436,7 @@ static const struct value_desc error_value =
 
 /**
  * Find the struct value_desc corresponding to the enum 'pname'.
- * 
+ *
  * We hash the enum value to get an index into the 'table' array,
  * which holds the index in the 'values' array of struct value_desc.
  * Once we've found the entry, we do the extra checks, if any, then
@@ -1286,7 +1445,7 @@ static const struct value_desc error_value =
  * If the value has to be computed (for example, it's the result of a
  * function call or we need to add 1 to it), we use the tmp 'v' to
  * store the result.
- * 
+ *
  * \param func name of glGet*v() func for error reporting
  * \param pname the enum value we're looking up
  * \param p is were we return the pointer to the value
@@ -1301,7 +1460,6 @@ static const struct value_desc *
 find_value(const char *func, GLenum pname, void **p, union value *v)
 {
    GET_CURRENT_CONTEXT(ctx);
-   struct gl_texture_unit *unit;
    int mask, hash;
    const struct value_desc *d;
    int api;
@@ -1312,12 +1470,14 @@ find_value(const char *func, GLenum pname, void **p, union value *v)
     * value since it's compatible with GLES2 its entry in table_set[] is at the
     * end.
     */
-   STATIC_ASSERT(ARRAY_SIZE(table_set) == API_OPENGL_LAST + 3);
-   if (_mesa_is_gles3(ctx)) {
-      api = API_OPENGL_LAST + 1;
-   }
-   if (_mesa_is_gles31(ctx)) {
-      api = API_OPENGL_LAST + 2;
+   STATIC_ASSERT(ARRAY_SIZE(table_set) == API_OPENGL_LAST + 4);
+   if (ctx->API == API_OPENGLES2) {
+      if (ctx->Version >= 32)
+         api = API_OPENGL_LAST + 3;
+      else if (ctx->Version >= 31)
+         api = API_OPENGL_LAST + 2;
+      else if (ctx->Version >= 30)
+         api = API_OPENGL_LAST + 1;
    }
    mask = ARRAY_SIZE(table(api)) - 1;
    hash = (pname * prime_factor);
@@ -1354,8 +1514,10 @@ find_value(const char *func, GLenum pname, void **p, union value *v)
       *p = ((char *) ctx->Array.VAO + d->offset);
       return d;
    case LOC_TEXUNIT:
-      unit = &ctx->Texture.Unit[ctx->Texture.CurrentUnit];
-      *p = ((char *) unit + d->offset);
+      if (ctx->Texture.CurrentUnit < ARRAY_SIZE(ctx->Texture.FixedFuncUnit)) {
+         unsigned index = ctx->Texture.CurrentUnit;
+         *p = ((char *)&ctx->Texture.FixedFuncUnit[index] + d->offset);
+      }
       return d;
    case LOC_CUSTOM:
       find_custom_value(ctx, d, v);
@@ -1376,6 +1538,78 @@ static const int transpose[] = {
    2, 6, 10, 14,
    3, 7, 11, 15
 };
+
+static GLsizei
+get_value_size(enum value_type type, const union value *v)
+{
+   switch (type) {
+   case TYPE_INVALID:
+      return 0;
+   case TYPE_CONST:
+   case TYPE_UINT:
+   case TYPE_INT:
+      return sizeof(GLint);
+   case TYPE_INT_2:
+   case TYPE_UINT_2:
+      return sizeof(GLint) * 2;
+   case TYPE_INT_3:
+   case TYPE_UINT_3:
+      return sizeof(GLint) * 3;
+   case TYPE_INT_4:
+   case TYPE_UINT_4:
+      return sizeof(GLint) * 4;
+   case TYPE_INT_N:
+      return sizeof(GLint) * v->value_int_n.n;
+   case TYPE_INT64:
+      return sizeof(GLint64);
+      break;
+   case TYPE_ENUM16:
+      return sizeof(GLenum16);
+   case TYPE_ENUM:
+      return sizeof(GLenum);
+   case TYPE_ENUM_2:
+      return sizeof(GLenum) * 2;
+   case TYPE_BOOLEAN:
+      return sizeof(GLboolean);
+   case TYPE_UBYTE:
+      return sizeof(GLubyte);
+   case TYPE_SHORT:
+      return sizeof(GLshort);
+   case TYPE_BIT_0:
+   case TYPE_BIT_1:
+   case TYPE_BIT_2:
+   case TYPE_BIT_3:
+   case TYPE_BIT_4:
+   case TYPE_BIT_5:
+   case TYPE_BIT_6:
+   case TYPE_BIT_7:
+      return 1;
+   case TYPE_FLOAT:
+   case TYPE_FLOATN:
+      return sizeof(GLfloat);
+   case TYPE_FLOAT_2:
+   case TYPE_FLOATN_2:
+      return sizeof(GLfloat) * 2;
+   case TYPE_FLOAT_3:
+   case TYPE_FLOATN_3:
+      return sizeof(GLfloat) * 3;
+   case TYPE_FLOAT_4:
+   case TYPE_FLOATN_4:
+      return sizeof(GLfloat) * 4;
+   case TYPE_FLOAT_8:
+      return sizeof(GLfloat) * 8;
+   case TYPE_DOUBLEN:
+      return sizeof(GLdouble);
+   case TYPE_DOUBLEN_2:
+      return sizeof(GLdouble) * 2;
+   case TYPE_MATRIX:
+      return sizeof (GLfloat) * 16;
+   case TYPE_MATRIX_T:
+      return sizeof (GLfloat) * 16;
+   default:
+      return -1;
+   }
+}
 
 void GLAPIENTRY
 _mesa_GetBooleanv(GLenum pname, GLboolean *params)
@@ -1420,20 +1654,28 @@ _mesa_GetBooleanv(GLenum pname, GLboolean *params)
       break;
 
    case TYPE_INT_4:
+   case TYPE_UINT_4:
       params[3] = INT_TO_BOOLEAN(((GLint *) p)[3]);
    case TYPE_INT_3:
+   case TYPE_UINT_3:
       params[2] = INT_TO_BOOLEAN(((GLint *) p)[2]);
    case TYPE_INT_2:
+   case TYPE_UINT_2:
    case TYPE_ENUM_2:
       params[1] = INT_TO_BOOLEAN(((GLint *) p)[1]);
    case TYPE_INT:
+   case TYPE_UINT:
    case TYPE_ENUM:
       params[0] = INT_TO_BOOLEAN(((GLint *) p)[0]);
       break;
 
+   case TYPE_ENUM16:
+      params[0] = INT_TO_BOOLEAN(((GLenum16 *) p)[0]);
+      break;
+
    case TYPE_INT_N:
       for (i = 0; i < v.value_int_n.n; i++)
-	 params[i] = INT_TO_BOOLEAN(v.value_int_n.ints[i]);
+         params[i] = INT_TO_BOOLEAN(v.value_int_n.ints[i]);
       break;
 
    case TYPE_INT64:
@@ -1442,18 +1684,26 @@ _mesa_GetBooleanv(GLenum pname, GLboolean *params)
 
    case TYPE_BOOLEAN:
       params[0] = ((GLboolean*) p)[0];
-      break;		
+      break;
+
+   case TYPE_UBYTE:
+      params[0] = INT_TO_BOOLEAN(((GLubyte *) p)[0]);
+      break;
+
+   case TYPE_SHORT:
+      params[0] = INT_TO_BOOLEAN(((GLshort *) p)[0]);
+      break;
 
    case TYPE_MATRIX:
       m = *(GLmatrix **) p;
       for (i = 0; i < 16; i++)
-	 params[i] = FLOAT_TO_BOOLEAN(m->m[i]);
+         params[i] = FLOAT_TO_BOOLEAN(m->m[i]);
       break;
 
    case TYPE_MATRIX_T:
       m = *(GLmatrix **) p;
       for (i = 0; i < 16; i++)
-	 params[i] = FLOAT_TO_BOOLEAN(m->m[transpose[i]]);
+         params[i] = FLOAT_TO_BOOLEAN(m->m[transpose[i]]);
       break;
 
    case TYPE_BIT_0:
@@ -1524,9 +1774,23 @@ _mesa_GetFloatv(GLenum pname, GLfloat *params)
       params[0] = (GLfloat) (((GLint *) p)[0]);
       break;
 
+   case TYPE_ENUM16:
+      params[0] = (GLfloat) (((GLenum16 *) p)[0]);
+      break;
+
    case TYPE_INT_N:
       for (i = 0; i < v.value_int_n.n; i++)
-	 params[i] = INT_TO_FLOAT(v.value_int_n.ints[i]);
+         params[i] = (GLfloat) v.value_int_n.ints[i];
+      break;
+
+   case TYPE_UINT_4:
+      params[3] = (GLfloat) (((GLuint *) p)[3]);
+   case TYPE_UINT_3:
+      params[2] = (GLfloat) (((GLuint *) p)[2]);
+   case TYPE_UINT_2:
+      params[1] = (GLfloat) (((GLuint *) p)[1]);
+   case TYPE_UINT:
+      params[0] = (GLfloat) (((GLuint *) p)[0]);
       break;
 
    case TYPE_INT64:
@@ -1535,18 +1799,26 @@ _mesa_GetFloatv(GLenum pname, GLfloat *params)
 
    case TYPE_BOOLEAN:
       params[0] = BOOLEAN_TO_FLOAT(*(GLboolean*) p);
-      break;		
+      break;
+
+   case TYPE_UBYTE:
+      params[0] = (GLfloat) ((GLubyte *) p)[0];
+      break;
+
+   case TYPE_SHORT:
+      params[0] = (GLfloat) ((GLshort *) p)[0];
+      break;
 
    case TYPE_MATRIX:
       m = *(GLmatrix **) p;
       for (i = 0; i < 16; i++)
-	 params[i] = m->m[i];
+         params[i] = m->m[i];
       break;
 
    case TYPE_MATRIX_T:
       m = *(GLmatrix **) p;
       for (i = 0; i < 16; i++)
-	 params[i] = m->m[transpose[i]];
+         params[i] = m->m[transpose[i]];
       break;
 
    case TYPE_BIT_0:
@@ -1612,20 +1884,28 @@ _mesa_GetIntegerv(GLenum pname, GLint *params)
       break;
 
    case TYPE_INT_4:
+   case TYPE_UINT_4:
       params[3] = ((GLint *) p)[3];
    case TYPE_INT_3:
+   case TYPE_UINT_3:
       params[2] = ((GLint *) p)[2];
    case TYPE_INT_2:
+   case TYPE_UINT_2:
    case TYPE_ENUM_2:
       params[1] = ((GLint *) p)[1];
    case TYPE_INT:
+   case TYPE_UINT:
    case TYPE_ENUM:
       params[0] = ((GLint *) p)[0];
       break;
 
+   case TYPE_ENUM16:
+      params[0] = ((GLenum16 *) p)[0];
+      break;
+
    case TYPE_INT_N:
       for (i = 0; i < v.value_int_n.n; i++)
-	 params[i] = v.value_int_n.ints[i];
+         params[i] = v.value_int_n.ints[i];
       break;
 
    case TYPE_INT64:
@@ -1634,18 +1914,26 @@ _mesa_GetIntegerv(GLenum pname, GLint *params)
 
    case TYPE_BOOLEAN:
       params[0] = BOOLEAN_TO_INT(*(GLboolean*) p);
-      break;		
+      break;
+
+   case TYPE_UBYTE:
+      params[0] = ((GLubyte *) p)[0];
+      break;
+
+   case TYPE_SHORT:
+      params[0] = ((GLshort *) p)[0];
+      break;
 
    case TYPE_MATRIX:
       m = *(GLmatrix **) p;
       for (i = 0; i < 16; i++)
-	 params[i] = FLOAT_TO_INT(m->m[i]);
+         params[i] = FLOAT_TO_INT(m->m[i]);
       break;
 
    case TYPE_MATRIX_T:
       m = *(GLmatrix **) p;
       for (i = 0; i < 16; i++)
-	 params[i] = FLOAT_TO_INT(m->m[transpose[i]]);
+         params[i] = FLOAT_TO_INT(m->m[transpose[i]]);
       break;
 
    case TYPE_BIT_0:
@@ -1722,9 +2010,23 @@ _mesa_GetInteger64v(GLenum pname, GLint64 *params)
       params[0] = ((GLint *) p)[0];
       break;
 
+   case TYPE_ENUM16:
+      params[0] = ((GLenum16 *) p)[0];
+      break;
+
    case TYPE_INT_N:
       for (i = 0; i < v.value_int_n.n; i++)
-	 params[i] = INT_TO_BOOLEAN(v.value_int_n.ints[i]);
+         params[i] = v.value_int_n.ints[i];
+      break;
+
+   case TYPE_UINT_4:
+      params[3] = ((GLuint *) p)[3];
+   case TYPE_UINT_3:
+      params[2] = ((GLuint *) p)[2];
+   case TYPE_UINT_2:
+      params[1] = ((GLuint *) p)[1];
+   case TYPE_UINT:
+      params[0] = ((GLuint *) p)[0];
       break;
 
    case TYPE_INT64:
@@ -1733,18 +2035,18 @@ _mesa_GetInteger64v(GLenum pname, GLint64 *params)
 
    case TYPE_BOOLEAN:
       params[0] = ((GLboolean*) p)[0];
-      break;		
+      break;
 
    case TYPE_MATRIX:
       m = *(GLmatrix **) p;
       for (i = 0; i < 16; i++)
-	 params[i] = FLOAT_TO_INT64(m->m[i]);
+         params[i] = FLOAT_TO_INT64(m->m[i]);
       break;
 
    case TYPE_MATRIX_T:
       m = *(GLmatrix **) p;
       for (i = 0; i < 16; i++)
-	 params[i] = FLOAT_TO_INT64(m->m[transpose[i]]);
+         params[i] = FLOAT_TO_INT64(m->m[transpose[i]]);
       break;
 
    case TYPE_BIT_0:
@@ -1815,9 +2117,23 @@ _mesa_GetDoublev(GLenum pname, GLdouble *params)
       params[0] = ((GLint *) p)[0];
       break;
 
+   case TYPE_ENUM16:
+      params[0] = ((GLenum16 *) p)[0];
+      break;
+
    case TYPE_INT_N:
       for (i = 0; i < v.value_int_n.n; i++)
-	 params[i] = v.value_int_n.ints[i];
+         params[i] = v.value_int_n.ints[i];
+      break;
+
+   case TYPE_UINT_4:
+      params[3] = ((GLuint *) p)[3];
+   case TYPE_UINT_3:
+      params[2] = ((GLuint *) p)[2];
+   case TYPE_UINT_2:
+      params[1] = ((GLuint *) p)[1];
+   case TYPE_UINT:
+      params[0] = ((GLuint *) p)[0];
       break;
 
    case TYPE_INT64:
@@ -1826,18 +2142,26 @@ _mesa_GetDoublev(GLenum pname, GLdouble *params)
 
    case TYPE_BOOLEAN:
       params[0] = *(GLboolean*) p;
-      break;		
+      break;
+
+   case TYPE_UBYTE:
+      params[0] = ((GLubyte *) p)[0];
+      break;
+
+   case TYPE_SHORT:
+      params[0] = ((GLshort *) p)[0];
+      break;
 
    case TYPE_MATRIX:
       m = *(GLmatrix **) p;
       for (i = 0; i < 16; i++)
-	 params[i] = m->m[i];
+         params[i] = m->m[i];
       break;
 
    case TYPE_MATRIX_T:
       m = *(GLmatrix **) p;
       for (i = 0; i < 16; i++)
-	 params[i] = m->m[transpose[i]];
+         params[i] = m->m[transpose[i]];
       break;
 
    case TYPE_BIT_0:
@@ -1851,6 +2175,86 @@ _mesa_GetDoublev(GLenum pname, GLdouble *params)
       shift = d->type - TYPE_BIT_0;
       params[0] = (*(GLbitfield *) p >> shift) & 1;
       break;
+   }
+}
+
+void GLAPIENTRY
+_mesa_GetUnsignedBytevEXT(GLenum pname, GLubyte *data)
+{
+   const struct value_desc *d;
+   union value v;
+   int shift;
+   void *p = NULL;
+   GLsizei size;
+   const char *func = "glGetUnsignedBytevEXT";
+
+   GET_CURRENT_CONTEXT(ctx);
+
+   if (!ctx->Extensions.EXT_memory_object) {
+      _mesa_error(ctx, GL_INVALID_OPERATION, "%s(unsupported)", func);
+      return;
+   }
+
+   d = find_value(func, pname, &p, &v);
+   size = get_value_size(d->type, &v);
+   if (size <= 0) {
+      _mesa_problem(ctx, "invalid value type in GetUnsignedBytevEXT()");
+   }
+
+   switch (d->type) {
+   case TYPE_BIT_0:
+   case TYPE_BIT_1:
+   case TYPE_BIT_2:
+   case TYPE_BIT_3:
+   case TYPE_BIT_4:
+   case TYPE_BIT_5:
+   case TYPE_BIT_6:
+   case TYPE_BIT_7:
+      shift = d->type - TYPE_BIT_0;
+      data[0] = (*(GLbitfield *) p >> shift) & 1;
+      break;
+   case TYPE_CONST:
+      memcpy(data, &d->offset, size);
+      break;
+   case TYPE_INT_N:
+      memcpy(data, &v.value_int_n.ints, size);
+      break;
+   case TYPE_UINT:
+   case TYPE_INT:
+   case TYPE_INT_2:
+   case TYPE_UINT_2:
+   case TYPE_INT_3:
+   case TYPE_UINT_3:
+   case TYPE_INT_4:
+   case TYPE_UINT_4:
+   case TYPE_INT64:
+   case TYPE_ENUM:
+   case TYPE_ENUM_2:
+   case TYPE_BOOLEAN:
+   case TYPE_UBYTE:
+   case TYPE_SHORT:
+   case TYPE_FLOAT:
+   case TYPE_FLOATN:
+   case TYPE_FLOAT_2:
+   case TYPE_FLOATN_2:
+   case TYPE_FLOAT_3:
+   case TYPE_FLOATN_3:
+   case TYPE_FLOAT_4:
+   case TYPE_FLOATN_4:
+   case TYPE_FLOAT_8:
+   case TYPE_DOUBLEN:
+   case TYPE_DOUBLEN_2:
+   case TYPE_MATRIX:
+   case TYPE_MATRIX_T:
+      memcpy(data, p, size);
+      break;
+   case TYPE_ENUM16: {
+      GLenum e = *(GLenum16 *)p;
+      memcpy(data, &e, sizeof(e));
+      break;
+   }
+   default:
+      break; /* nothing - GL error was recorded */
    }
 }
 
@@ -1909,9 +2313,9 @@ find_value_indexed(const char *func, GLenum pname, GLuint index, union value *v)
 
    case GL_BLEND:
       if (index >= ctx->Const.MaxDrawBuffers)
-	 goto invalid_value;
+         goto invalid_value;
       if (!ctx->Extensions.EXT_draw_buffers2)
-	 goto invalid_enum;
+         goto invalid_enum;
       v->value_int = (ctx->Color.BlendEnabled >> index) & 1;
       return TYPE_INT;
 
@@ -1919,58 +2323,58 @@ find_value_indexed(const char *func, GLenum pname, GLuint index, union value *v)
       /* fall-through */
    case GL_BLEND_SRC_RGB:
       if (index >= ctx->Const.MaxDrawBuffers)
-	 goto invalid_value;
+         goto invalid_value;
       if (!ctx->Extensions.ARB_draw_buffers_blend)
-	 goto invalid_enum;
+         goto invalid_enum;
       v->value_int = ctx->Color.Blend[index].SrcRGB;
       return TYPE_INT;
    case GL_BLEND_SRC_ALPHA:
       if (index >= ctx->Const.MaxDrawBuffers)
-	 goto invalid_value;
+         goto invalid_value;
       if (!ctx->Extensions.ARB_draw_buffers_blend)
-	 goto invalid_enum;
+         goto invalid_enum;
       v->value_int = ctx->Color.Blend[index].SrcA;
       return TYPE_INT;
    case GL_BLEND_DST:
       /* fall-through */
    case GL_BLEND_DST_RGB:
       if (index >= ctx->Const.MaxDrawBuffers)
-	 goto invalid_value;
+         goto invalid_value;
       if (!ctx->Extensions.ARB_draw_buffers_blend)
-	 goto invalid_enum;
+         goto invalid_enum;
       v->value_int = ctx->Color.Blend[index].DstRGB;
       return TYPE_INT;
    case GL_BLEND_DST_ALPHA:
       if (index >= ctx->Const.MaxDrawBuffers)
-	 goto invalid_value;
+         goto invalid_value;
       if (!ctx->Extensions.ARB_draw_buffers_blend)
-	 goto invalid_enum;
+         goto invalid_enum;
       v->value_int = ctx->Color.Blend[index].DstA;
       return TYPE_INT;
    case GL_BLEND_EQUATION_RGB:
       if (index >= ctx->Const.MaxDrawBuffers)
-	 goto invalid_value;
+         goto invalid_value;
       if (!ctx->Extensions.ARB_draw_buffers_blend)
-	 goto invalid_enum;
+         goto invalid_enum;
       v->value_int = ctx->Color.Blend[index].EquationRGB;
       return TYPE_INT;
    case GL_BLEND_EQUATION_ALPHA:
       if (index >= ctx->Const.MaxDrawBuffers)
-	 goto invalid_value;
+         goto invalid_value;
       if (!ctx->Extensions.ARB_draw_buffers_blend)
-	 goto invalid_enum;
+         goto invalid_enum;
       v->value_int = ctx->Color.Blend[index].EquationA;
       return TYPE_INT;
 
    case GL_COLOR_WRITEMASK:
       if (index >= ctx->Const.MaxDrawBuffers)
-	 goto invalid_value;
+         goto invalid_value;
       if (!ctx->Extensions.EXT_draw_buffers2)
-	 goto invalid_enum;
-      v->value_int_4[0] = ctx->Color.ColorMask[index][RCOMP] ? 1 : 0;
-      v->value_int_4[1] = ctx->Color.ColorMask[index][GCOMP] ? 1 : 0;
-      v->value_int_4[2] = ctx->Color.ColorMask[index][BCOMP] ? 1 : 0;
-      v->value_int_4[3] = ctx->Color.ColorMask[index][ACOMP] ? 1 : 0;
+         goto invalid_enum;
+      v->value_int_4[0] = GET_COLORMASK_BIT(ctx->Color.ColorMask, index, 0);
+      v->value_int_4[1] = GET_COLORMASK_BIT(ctx->Color.ColorMask, index, 1);
+      v->value_int_4[2] = GET_COLORMASK_BIT(ctx->Color.ColorMask, index, 2);
+      v->value_int_4[3] = GET_COLORMASK_BIT(ctx->Color.ColorMask, index, 3);
       return TYPE_INT_4;
 
    case GL_SCISSOR_BOX:
@@ -2011,51 +2415,51 @@ find_value_indexed(const char *func, GLenum pname, GLuint index, union value *v)
 
    case GL_TRANSFORM_FEEDBACK_BUFFER_START:
       if (index >= ctx->Const.MaxTransformFeedbackBuffers)
-	 goto invalid_value;
+         goto invalid_value;
       if (!ctx->Extensions.EXT_transform_feedback)
-	 goto invalid_enum;
+         goto invalid_enum;
       v->value_int64 = ctx->TransformFeedback.CurrentObject->Offset[index];
       return TYPE_INT64;
 
    case GL_TRANSFORM_FEEDBACK_BUFFER_SIZE:
       if (index >= ctx->Const.MaxTransformFeedbackBuffers)
-	 goto invalid_value;
+         goto invalid_value;
       if (!ctx->Extensions.EXT_transform_feedback)
-	 goto invalid_enum;
+         goto invalid_enum;
       v->value_int64
          = ctx->TransformFeedback.CurrentObject->RequestedSize[index];
       return TYPE_INT64;
 
    case GL_TRANSFORM_FEEDBACK_BUFFER_BINDING:
       if (index >= ctx->Const.MaxTransformFeedbackBuffers)
-	 goto invalid_value;
+         goto invalid_value;
       if (!ctx->Extensions.EXT_transform_feedback)
-	 goto invalid_enum;
+         goto invalid_enum;
       v->value_int = ctx->TransformFeedback.CurrentObject->BufferNames[index];
       return TYPE_INT;
 
    case GL_UNIFORM_BUFFER_BINDING:
       if (index >= ctx->Const.MaxUniformBufferBindings)
-	 goto invalid_value;
+         goto invalid_value;
       if (!ctx->Extensions.ARB_uniform_buffer_object)
-	 goto invalid_enum;
+         goto invalid_enum;
       v->value_int = ctx->UniformBufferBindings[index].BufferObject->Name;
       return TYPE_INT;
 
    case GL_UNIFORM_BUFFER_START:
       if (index >= ctx->Const.MaxUniformBufferBindings)
-	 goto invalid_value;
+         goto invalid_value;
       if (!ctx->Extensions.ARB_uniform_buffer_object)
-	 goto invalid_enum;
+         goto invalid_enum;
       v->value_int = ctx->UniformBufferBindings[index].Offset < 0 ? 0 :
                      ctx->UniformBufferBindings[index].Offset;
       return TYPE_INT;
 
    case GL_UNIFORM_BUFFER_SIZE:
       if (index >= ctx->Const.MaxUniformBufferBindings)
-	 goto invalid_value;
+         goto invalid_value;
       if (!ctx->Extensions.ARB_uniform_buffer_object)
-	 goto invalid_enum;
+         goto invalid_enum;
       v->value_int = ctx->UniformBufferBindings[index].Size < 0 ? 0 :
                      ctx->UniformBufferBindings[index].Size;
       return TYPE_INT;
@@ -2109,7 +2513,8 @@ find_value_indexed(const char *func, GLenum pname, GLuint index, union value *v)
          goto invalid_enum;
       if (index >= ctx->Const.MaxAtomicBufferBindings)
          goto invalid_value;
-      v->value_int64 = ctx->AtomicBufferBindings[index].Offset;
+      v->value_int64 = ctx->AtomicBufferBindings[index].Offset < 0 ? 0 :
+                       ctx->AtomicBufferBindings[index].Offset;
       return TYPE_INT64;
 
    case GL_ATOMIC_COUNTER_BUFFER_SIZE:
@@ -2117,7 +2522,8 @@ find_value_indexed(const char *func, GLenum pname, GLuint index, union value *v)
          goto invalid_enum;
       if (index >= ctx->Const.MaxAtomicBufferBindings)
          goto invalid_value;
-      v->value_int64 = ctx->AtomicBufferBindings[index].Size;
+      v->value_int64 = ctx->AtomicBufferBindings[index].Size < 0 ? 0 :
+                       ctx->AtomicBufferBindings[index].Size;
       return TYPE_INT64;
 
    case GL_VERTEX_BINDING_DIVISOR:
@@ -2126,7 +2532,7 @@ find_value_indexed(const char *func, GLenum pname, GLuint index, union value *v)
           goto invalid_enum;
       if (index >= ctx->Const.Program[MESA_SHADER_VERTEX].MaxAttribs)
           goto invalid_value;
-      v->value_int = ctx->Array.VAO->VertexBinding[VERT_ATTRIB_GENERIC(index)].InstanceDivisor;
+      v->value_int = ctx->Array.VAO->BufferBinding[VERT_ATTRIB_GENERIC(index)].InstanceDivisor;
       return TYPE_INT;
 
    case GL_VERTEX_BINDING_OFFSET:
@@ -2134,7 +2540,7 @@ find_value_indexed(const char *func, GLenum pname, GLuint index, union value *v)
           goto invalid_enum;
       if (index >= ctx->Const.Program[MESA_SHADER_VERTEX].MaxAttribs)
           goto invalid_value;
-      v->value_int = ctx->Array.VAO->VertexBinding[VERT_ATTRIB_GENERIC(index)].Offset;
+      v->value_int = ctx->Array.VAO->BufferBinding[VERT_ATTRIB_GENERIC(index)].Offset;
       return TYPE_INT;
 
    case GL_VERTEX_BINDING_STRIDE:
@@ -2142,7 +2548,7 @@ find_value_indexed(const char *func, GLenum pname, GLuint index, union value *v)
           goto invalid_enum;
       if (index >= ctx->Const.Program[MESA_SHADER_VERTEX].MaxAttribs)
           goto invalid_value;
-      v->value_int = ctx->Array.VAO->VertexBinding[VERT_ATTRIB_GENERIC(index)].Stride;
+      v->value_int = ctx->Array.VAO->BufferBinding[VERT_ATTRIB_GENERIC(index)].Stride;
       return TYPE_INT;
 
    case GL_VERTEX_BINDING_BUFFER:
@@ -2150,7 +2556,7 @@ find_value_indexed(const char *func, GLenum pname, GLuint index, union value *v)
          goto invalid_enum;
       if (index >= ctx->Const.Program[MESA_SHADER_VERTEX].MaxAttribs)
          goto invalid_value;
-      v->value_int = ctx->Array.VAO->VertexBinding[VERT_ATTRIB_GENERIC(index)].BufferObj->Name;
+      v->value_int = ctx->Array.VAO->BufferBinding[VERT_ATTRIB_GENERIC(index)].BufferObj->Name;
       return TYPE_INT;
 
    /* ARB_shader_image_load_store */
@@ -2241,7 +2647,7 @@ find_value_indexed(const char *func, GLenum pname, GLuint index, union value *v)
    case GL_SAMPLER_BINDING: {
       struct gl_sampler_object *samp;
 
-      if (ctx->API != API_OPENGL_CORE)
+      if (!_mesa_is_desktop_gl(ctx) || ctx->Version < 33)
          goto invalid_enum;
       if (index >= _mesa_max_tex_unit(ctx))
          goto invalid_value;
@@ -2266,6 +2672,30 @@ find_value_indexed(const char *func, GLenum pname, GLuint index, union value *v)
          goto invalid_value;
       v->value_int = ctx->Const.MaxComputeWorkGroupSize[index];
       return TYPE_INT;
+
+   /* ARB_compute_variable_group_size */
+   case GL_MAX_COMPUTE_VARIABLE_GROUP_SIZE_ARB:
+      if (!ctx->Extensions.ARB_compute_variable_group_size)
+         goto invalid_enum;
+      if (index >= 3)
+         goto invalid_value;
+      v->value_int = ctx->Const.MaxComputeVariableGroupSize[index];
+      return TYPE_INT;
+
+   /* GL_EXT_external_objects */
+   case GL_NUM_DEVICE_UUIDS_EXT:
+      v->value_int = 1;
+      return TYPE_INT;
+   case GL_DRIVER_UUID_EXT:
+      if (index >= 1)
+         goto invalid_value;
+      _mesa_get_driver_uuid(ctx, v->value_int_4);
+      return TYPE_INT_4;
+   case GL_DEVICE_UUID_EXT:
+      if (index >= 1)
+         goto invalid_value;
+      _mesa_get_device_uuid(ctx, v->value_int_4);
+      return TYPE_INT_4;
    }
 
  invalid_enum:
@@ -2287,9 +2717,11 @@ _mesa_GetBooleani_v( GLenum pname, GLuint index, GLboolean *params )
 
    switch (type) {
    case TYPE_INT:
+   case TYPE_UINT:
       params[0] = INT_TO_BOOLEAN(v.value_int);
       break;
    case TYPE_INT_4:
+   case TYPE_UINT_4:
       params[0] = INT_TO_BOOLEAN(v.value_int_4[0]);
       params[1] = INT_TO_BOOLEAN(v.value_int_4[1]);
       params[2] = INT_TO_BOOLEAN(v.value_int_4[2]);
@@ -2332,9 +2764,11 @@ _mesa_GetIntegeri_v( GLenum pname, GLuint index, GLint *params )
       break;
 
    case TYPE_INT:
+   case TYPE_UINT:
       params[0] = v.value_int;
       break;
    case TYPE_INT_4:
+   case TYPE_UINT_4:
       params[0] = v.value_int_4[0];
       params[1] = v.value_int_4[1];
       params[2] = v.value_int_4[2];
@@ -2364,6 +2798,15 @@ _mesa_GetInteger64i_v( GLenum pname, GLuint index, GLint64 *params )
       params[1] = v.value_int_4[1];
       params[2] = v.value_int_4[2];
       params[3] = v.value_int_4[3];
+      break;
+   case TYPE_UINT:
+      params[0] = (GLuint) v.value_int;
+      break;
+   case TYPE_UINT_4:
+      params[0] = (GLuint) v.value_int_4[0];
+      params[1] = (GLuint) v.value_int_4[1];
+      params[2] = (GLuint) v.value_int_4[2];
+      params[3] = (GLuint) v.value_int_4[3];
       break;
    case TYPE_INT64:
       params[0] = v.value_int64;
@@ -2412,12 +2855,23 @@ _mesa_GetFloati_v(GLenum pname, GLuint index, GLfloat *params)
       params[1] = (GLfloat) v.value_int_4[1];
    case TYPE_INT:
    case TYPE_ENUM:
+   case TYPE_ENUM16:
       params[0] = (GLfloat) v.value_int_4[0];
       break;
 
    case TYPE_INT_N:
       for (i = 0; i < v.value_int_n.n; i++)
-	 params[i] = INT_TO_FLOAT(v.value_int_n.ints[i]);
+         params[i] = (GLfloat) v.value_int_n.ints[i];
+      break;
+
+   case TYPE_UINT_4:
+      params[3] = (GLfloat) ((GLuint) v.value_int_4[3]);
+   case TYPE_UINT_3:
+      params[2] = (GLfloat) ((GLuint) v.value_int_4[2]);
+   case TYPE_UINT_2:
+      params[1] = (GLfloat) ((GLuint) v.value_int_4[1]);
+   case TYPE_UINT:
+      params[0] = (GLfloat) ((GLuint) v.value_int_4[0]);
       break;
 
    case TYPE_INT64:
@@ -2428,16 +2882,24 @@ _mesa_GetFloati_v(GLenum pname, GLuint index, GLfloat *params)
       params[0] = BOOLEAN_TO_FLOAT(v.value_bool);
       break;
 
+   case TYPE_UBYTE:
+      params[0] = (GLfloat) v.value_ubyte;
+      break;
+
+   case TYPE_SHORT:
+      params[0] = (GLfloat) v.value_short;
+      break;
+
    case TYPE_MATRIX:
       m = *(GLmatrix **) &v;
       for (i = 0; i < 16; i++)
-	 params[i] = m->m[i];
+         params[i] = m->m[i];
       break;
 
    case TYPE_MATRIX_T:
       m = *(GLmatrix **) &v;
       for (i = 0; i < 16; i++)
-	 params[i] = m->m[transpose[i]];
+         params[i] = m->m[transpose[i]];
       break;
 
    default:
@@ -2484,12 +2946,23 @@ _mesa_GetDoublei_v(GLenum pname, GLuint index, GLdouble *params)
       params[1] = (GLdouble) v.value_int_4[1];
    case TYPE_INT:
    case TYPE_ENUM:
+   case TYPE_ENUM16:
       params[0] = (GLdouble) v.value_int_4[0];
       break;
 
    case TYPE_INT_N:
       for (i = 0; i < v.value_int_n.n; i++)
-	 params[i] = (GLdouble) INT_TO_FLOAT(v.value_int_n.ints[i]);
+         params[i] = (GLdouble) v.value_int_n.ints[i];
+      break;
+
+   case TYPE_UINT_4:
+      params[3] = (GLdouble) ((GLuint) v.value_int_4[3]);
+   case TYPE_UINT_3:
+      params[2] = (GLdouble) ((GLuint) v.value_int_4[2]);
+   case TYPE_UINT_2:
+      params[1] = (GLdouble) ((GLuint) v.value_int_4[1]);
+   case TYPE_UINT:
+      params[0] = (GLdouble) ((GLuint) v.value_int_4[0]);
       break;
 
    case TYPE_INT64:
@@ -2500,20 +2973,88 @@ _mesa_GetDoublei_v(GLenum pname, GLuint index, GLdouble *params)
       params[0] = (GLdouble) BOOLEAN_TO_FLOAT(v.value_bool);
       break;
 
+   case TYPE_UBYTE:
+      params[0] = (GLdouble) v.value_ubyte;
+      break;
+
+   case TYPE_SHORT:
+      params[0] = (GLdouble) v.value_short;
+      break;
+
    case TYPE_MATRIX:
       m = *(GLmatrix **) &v;
       for (i = 0; i < 16; i++)
-	 params[i] = (GLdouble) m->m[i];
+         params[i] = (GLdouble) m->m[i];
       break;
 
    case TYPE_MATRIX_T:
       m = *(GLmatrix **) &v;
       for (i = 0; i < 16; i++)
-	 params[i] = (GLdouble) m->m[transpose[i]];
+         params[i] = (GLdouble) m->m[transpose[i]];
       break;
 
    default:
       ;
+   }
+}
+
+void GLAPIENTRY
+_mesa_GetUnsignedBytei_vEXT(GLenum target, GLuint index, GLubyte *data)
+{
+   GLsizei size;
+   union value v;
+   enum value_type type;
+   const char *func = "glGetUnsignedBytei_vEXT";
+
+   GET_CURRENT_CONTEXT(ctx);
+
+   if (!ctx->Extensions.EXT_memory_object) {
+      _mesa_error(ctx, GL_INVALID_OPERATION, "%s(unsupported)", func);
+      return;
+   }
+
+   type = find_value_indexed(func, target, index, &v);
+   size = get_value_size(type, &v);
+   if (size <= 0) {
+      _mesa_problem(ctx, "invalid value type in GetUnsignedBytei_vEXT()");
+   }
+
+   switch (type) {
+   case TYPE_UINT:
+   case TYPE_INT:
+   case TYPE_INT_2:
+   case TYPE_UINT_2:
+   case TYPE_INT_3:
+   case TYPE_UINT_3:
+   case TYPE_INT_4:
+   case TYPE_UINT_4:
+   case TYPE_INT64:
+   case TYPE_ENUM16:
+   case TYPE_ENUM:
+   case TYPE_ENUM_2:
+   case TYPE_BOOLEAN:
+   case TYPE_UBYTE:
+   case TYPE_SHORT:
+   case TYPE_FLOAT:
+   case TYPE_FLOATN:
+   case TYPE_FLOAT_2:
+   case TYPE_FLOATN_2:
+   case TYPE_FLOAT_3:
+   case TYPE_FLOATN_3:
+   case TYPE_FLOAT_4:
+   case TYPE_FLOATN_4:
+   case TYPE_FLOAT_8:
+   case TYPE_DOUBLEN:
+   case TYPE_DOUBLEN_2:
+   case TYPE_MATRIX:
+   case TYPE_MATRIX_T:
+      memcpy(data, &v.value_int, size);
+      break;
+   case TYPE_INT_N:
+      memcpy(data, &v.value_int_n.ints, size);
+      break;
+   default:
+      break; /* nothing - GL error was recorded */
    }
 }
 
@@ -2555,20 +3096,28 @@ _mesa_GetFixedv(GLenum pname, GLfixed *params)
       break;
 
    case TYPE_INT_4:
+   case TYPE_UINT_4:
       params[3] = INT_TO_FIXED(((GLint *) p)[3]);
    case TYPE_INT_3:
+   case TYPE_UINT_3:
       params[2] = INT_TO_FIXED(((GLint *) p)[2]);
    case TYPE_INT_2:
+   case TYPE_UINT_2:
    case TYPE_ENUM_2:
       params[1] = INT_TO_FIXED(((GLint *) p)[1]);
    case TYPE_INT:
+   case TYPE_UINT:
    case TYPE_ENUM:
       params[0] = INT_TO_FIXED(((GLint *) p)[0]);
       break;
 
+   case TYPE_ENUM16:
+      params[0] = INT_TO_FIXED((GLint)(((GLenum16 *) p)[0]));
+      break;
+
    case TYPE_INT_N:
       for (i = 0; i < v.value_int_n.n; i++)
-	 params[i] = INT_TO_FIXED(v.value_int_n.ints[i]);
+         params[i] = INT_TO_FIXED(v.value_int_n.ints[i]);
       break;
 
    case TYPE_INT64:
@@ -2577,18 +3126,26 @@ _mesa_GetFixedv(GLenum pname, GLfixed *params)
 
    case TYPE_BOOLEAN:
       params[0] = BOOLEAN_TO_FIXED(((GLboolean*) p)[0]);
-      break;		
+      break;
+
+   case TYPE_UBYTE:
+      params[0] = INT_TO_FIXED(((GLubyte *) p)[0]);
+      break;
+
+   case TYPE_SHORT:
+      params[0] = INT_TO_FIXED(((GLshort *) p)[0]);
+      break;
 
    case TYPE_MATRIX:
       m = *(GLmatrix **) p;
       for (i = 0; i < 16; i++)
-	 params[i] = FLOAT_TO_FIXED(m->m[i]);
+         params[i] = FLOAT_TO_FIXED(m->m[i]);
       break;
 
    case TYPE_MATRIX_T:
       m = *(GLmatrix **) p;
       for (i = 0; i < 16; i++)
-	 params[i] = FLOAT_TO_FIXED(m->m[transpose[i]]);
+         params[i] = FLOAT_TO_FIXED(m->m[transpose[i]]);
       break;
 
    case TYPE_BIT_0:

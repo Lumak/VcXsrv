@@ -22,15 +22,12 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-#pragma once
 #ifndef GLSL_SYMBOL_TABLE
 #define GLSL_SYMBOL_TABLE
 
 #include <new>
 
-extern "C" {
 #include "program/symbol_table.h"
-}
 #include "ir.h"
 
 class symbol_table_entry;
@@ -44,11 +41,6 @@ struct glsl_type;
  */
 struct glsl_symbol_table {
    DECLARE_RALLOC_CXX_OPERATORS(glsl_symbol_table)
-   static void operator delete(void *table, void *ctx)
-   {
-      ralloc_set_destructor(table, NULL);
-      ralloc_free(table);
-   }
 
    glsl_symbol_table();
    ~glsl_symbol_table();
@@ -115,6 +107,7 @@ private:
 
    struct _mesa_symbol_table *table;
    void *mem_ctx;
+   void *linalloc;
 };
 
 #endif /* GLSL_SYMBOL_TABLE */

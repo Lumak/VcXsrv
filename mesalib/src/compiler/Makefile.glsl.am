@@ -30,38 +30,52 @@ EXTRA_DIST += glsl/tests glsl/glcpp/tests glsl/README	\
 	glsl/glcpp/glcpp-parse.y			\
 	SConscript.glsl
 
-TESTS += glsl/glcpp/tests/glcpp-test			\
-	glsl/glcpp/tests/glcpp-test-cr-lf		\
+TESTS += glsl/glcpp/tests/glcpp-test.sh			\
 	glsl/tests/blob-test				\
+	glsl/tests/cache-test				\
 	glsl/tests/general-ir-test			\
-	glsl/tests/optimization-test			\
+	glsl/tests/optimization-test.sh			\
 	glsl/tests/sampler-types-test			\
 	glsl/tests/uniform-initializer-test             \
-	glsl/tests/warnings-test
+	glsl/tests/warnings-test.sh
 
 TESTS_ENVIRONMENT= \
-	export PYTHON2=$(PYTHON2); \
+	export abs_builddir=$(abs_builddir); \
+	export PYTHON=$(PYTHON); \
 	export PYTHON_FLAGS=$(PYTHON_FLAGS);
 
 check_PROGRAMS +=					\
 	glsl/glcpp/glcpp				\
 	glsl/glsl_test					\
 	glsl/tests/blob-test				\
+	glsl/tests/cache-test				\
 	glsl/tests/general-ir-test			\
 	glsl/tests/sampler-types-test			\
 	glsl/tests/uniform-initializer-test
 
-noinst_PROGRAMS = glsl_compiler
+noinst_PROGRAMS += glsl_compiler
 
 glsl_tests_blob_test_SOURCES =				\
 	glsl/tests/blob_test.c
 glsl_tests_blob_test_LDADD =				\
 	glsl/libglsl.la
 
+glsl_tests_cache_test_SOURCES =				\
+	glsl/tests/cache_test.c
+glsl_tests_cache_test_CFLAGS =				\
+	$(PTHREAD_CFLAGS)
+glsl_tests_cache_test_LDADD =				\
+	glsl/libglsl.la					\
+	$(PTHREAD_LIBS)					\
+	$(CLOCK_LIB)
+
 glsl_tests_general_ir_test_SOURCES =			\
+	glsl/tests/array_refcount_test.cpp 		\
 	glsl/tests/builtin_variable_test.cpp		\
 	glsl/tests/invalidate_locations_test.cpp	\
 	glsl/tests/general_ir_test.cpp			\
+	glsl/tests/lower_int64_test.cpp			\
+	glsl/tests/opt_add_neg_to_sub_test.cpp		\
 	glsl/tests/varyings_test.cpp
 glsl_tests_general_ir_test_CFLAGS =			\
 	$(PTHREAD_CFLAGS)
@@ -70,7 +84,8 @@ glsl_tests_general_ir_test_LDADD =			\
 	glsl/libglsl.la		\
 	glsl/libstandalone.la				\
 	$(top_builddir)/src/libglsl_util.la		\
-	$(PTHREAD_LIBS)
+	$(PTHREAD_LIBS)					\
+	$(CLOCK_LIB)
 
 glsl_tests_uniform_initializer_test_SOURCES =		\
 	glsl/tests/copy_constant_to_storage_tests.cpp	\
@@ -118,8 +133,8 @@ glsl_libglsl_la_LIBADD = \
 
 glsl_libglsl_la_SOURCES =				\
 	$(LIBGLSL_GENERATED_FILES)			\
-	$(LIBGLSL_FILES)
-
+	$(LIBGLSL_FILES)				\
+	$(LIBGLSL_SHADER_CACHE_FILES)
 
 glsl_libstandalone_la_SOURCES = \
 	$(GLSL_COMPILER_CXX_FILES)
@@ -134,7 +149,8 @@ glsl_compiler_SOURCES = \
 	glsl/main.cpp
 
 glsl_compiler_LDADD = \
-	glsl/libstandalone.la
+	glsl/libstandalone.la \
+	$(CLOCK_LIB)
 
 glsl_glsl_test_SOURCES = \
 	glsl/test.cpp \
@@ -145,7 +161,8 @@ glsl_glsl_test_LDADD =					\
 	glsl/libglsl.la					\
 	glsl/libstandalone.la				\
 	$(top_builddir)/src/libglsl_util.la		\
-	$(PTHREAD_LIBS)
+	$(PTHREAD_LIBS)					\
+	$(CLOCK_LIB)
 
 # We write our own rules for yacc and lex below. We'd rather use automake,
 # but automake makes it especially difficult for a number of reasons:
@@ -179,7 +196,6 @@ am__v_YACC_1 =
 
 YACC_GEN = $(AM_V_YACC)$(YACC) $(YFLAGS)
 LEX_GEN = $(AM_V_LEX)$(LEX) $(LFLAGS)
-PYTHON_GEN = $(AM_V_GEN)$(PYTHON2) $(PYTHON_FLAGS)
 
 glsl/glsl_parser.cpp glsl/glsl_parser.h: glsl/glsl_parser.yy
 	$(MKDIR_GEN)
@@ -235,6 +251,12 @@ CLEANFILES +=						\
 	glsl/glcpp/glcpp-lex.c
 
 clean-local:
+	$(RM) glsl/tests/lower_jumps/*.opt_test
+	$(RM) glsl/tests/lower_jumps/*.expected
+	$(RM) glsl/tests/lower_jumps/*.out
+	$(RM) glsl/tests/warnings/*.out
+	$(RM) glsl/glcpp/tests/*.out
+	$(RM) -r glsl/glcpp/tests/subtest*/
 	$(RM) -r subtest-cr subtest-cr-lf subtest-lf subtest-lf-cr
 
 dist-hook:

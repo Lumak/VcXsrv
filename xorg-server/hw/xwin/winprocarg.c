@@ -41,10 +41,8 @@ from The Open Group.
 #include "winmsg.h"
 #include "winmonitors.h"
 
-#ifdef XWIN_CLIPBOARD
 #include "winclipboard/winclipboard.h"
 extern Bool g_fClipboardPrimary;
-#endif
 
 /*
  * Function prototypes
@@ -135,12 +133,9 @@ winInitializeScreenDefaults(void)
 #ifdef XWIN_MULTIWINDOWINTWM
 #endif
     defaultScreenInfo.fRootless = FALSE;
-#ifdef XWIN_MULTIWINDOW
     defaultScreenInfo.fMultiWindow = FALSE;
-#endif
-#if defined(XWIN_MULTIWINDOW) || defined(XWIN_MULTIWINDOWEXTWM)
     defaultScreenInfo.fMultiMonitorOverride = FALSE;
-#endif
+    defaultScreenInfo.fCompositeWM = TRUE;
     defaultScreenInfo.fMultipleMonitors = FALSE;
     defaultScreenInfo.fLessPointer = FALSE;
     defaultScreenInfo.iResizeMode = resizeDefault;
@@ -531,10 +526,8 @@ ddxProcessArgument(int argc, char *argv[], int i)
      * Look for the '-fullscreen' argument
      */
     if (IS_OPTION("-fullscreen")) {
-#if defined(XWIN_MULTIWINDOW) || defined(XWIN_MULTIWINDOWEXTWM)
         if (!screenInfoPtr->fMultiMonitorOverride)
             screenInfoPtr->fMultipleMonitors = FALSE;
-#endif
         screenInfoPtr->fFullScreen = TRUE;
         // resizing is not allowed in full screen so change the default to not allowed
         screenInfoPtr->iResizeMode=resizeNotAllowed;
@@ -557,10 +550,8 @@ ddxProcessArgument(int argc, char *argv[], int i)
      * Look for the '-nodecoration' argument
      */
     if (IS_OPTION("-nodecoration")) {
-#if defined(XWIN_MULTIWINDOW) || defined(XWIN_MULTIWINDOWEXTWM)
         if (!screenInfoPtr->fMultiMonitorOverride)
             screenInfoPtr->fMultipleMonitors = FALSE;
-#endif
         screenInfoPtr->fDecoration = FALSE;
 
         /* Indicate that we have processed this argument */
@@ -596,40 +587,52 @@ ddxProcessArgument(int argc, char *argv[], int i)
      * Look for the '-rootless' argument
      */
     if (IS_OPTION("-rootless")) {
-#if defined(XWIN_MULTIWINDOW) || defined(XWIN_MULTIWINDOWEXTWM)
         if (!screenInfoPtr->fMultiMonitorOverride)
             screenInfoPtr->fMultipleMonitors = FALSE;
-#endif
         screenInfoPtr->fRootless = TRUE;
 
         /* Indicate that we have processed this argument */
         return 1;
     }
 
-#ifdef XWIN_MULTIWINDOW
     /*
      * Look for the '-multiwindow' argument
      */
     if (IS_OPTION("-multiwindow")) {
-#if defined(XWIN_MULTIWINDOW) || defined(XWIN_MULTIWINDOWEXTWM)
         if (!screenInfoPtr->fMultiMonitorOverride)
             screenInfoPtr->fMultipleMonitors = TRUE;
-#endif
         screenInfoPtr->fMultiWindow = TRUE;
 
         /* Indicate that we have processed this argument */
         return 1;
     }
-#endif
+
+    /*
+     * Look for the '-compositewm' argument
+     */
+    if (IS_OPTION("-compositewm")) {
+        screenInfoPtr->fCompositeWM = TRUE;
+
+        /* Indicate that we have processed this argument */
+        return 1;
+    }
+
+    /*
+     * Look for the '-compositewm' argument
+     */
+    if (IS_OPTION("-nocompositewm")) {
+        screenInfoPtr->fCompositeWM = FALSE;
+
+        /* Indicate that we have processed this argument */
+        return 1;
+    }
 
     /*
      * Look for the '-multiplemonitors' argument
      */
     if (IS_OPTION("-multiplemonitors")
         || IS_OPTION("-multimonitors")) {
-#if defined(XWIN_MULTIWINDOW) || defined(XWIN_MULTIWINDOWEXTWM)
         screenInfoPtr->fMultiMonitorOverride = TRUE;
-#endif
         screenInfoPtr->fMultipleMonitors = TRUE;
 
         /* Indicate that we have processed this argument */
@@ -641,9 +644,7 @@ ddxProcessArgument(int argc, char *argv[], int i)
      */
     if (IS_OPTION("-nomultiplemonitors")
         || IS_OPTION("-nomultimonitors")) {
-#if defined(XWIN_MULTIWINDOW) || defined(XWIN_MULTIWINDOWEXTWM)
         screenInfoPtr->fMultiMonitorOverride = TRUE;
-#endif
         screenInfoPtr->fMultipleMonitors = FALSE;
 
         /* Indicate that we have processed this argument */
@@ -699,7 +700,6 @@ ddxProcessArgument(int argc, char *argv[], int i)
         return 1;
     }
 
-#ifdef XWIN_CLIPBOARD
     /*
      * Look for the '-clipboard' argument
      */
@@ -740,7 +740,6 @@ ddxProcessArgument(int argc, char *argv[], int i)
         /* Indicate that we have processed this argument */
         return 1;
     }
-#endif
 
     /*
      * Look for the '-ignoreinput' argument
@@ -948,7 +947,21 @@ ddxProcessArgument(int argc, char *argv[], int i)
      * Look for the '-auth' argument
      */
     if (IS_OPTION("-auth")) {
+        HANDLE hFile;
+        char *pszFile;
+        CHECK_ARGS(1);
         g_fAuthEnabled = TRUE;
+        pszFile = argv[++i];
+        hFile = CreateFile(pszFile,GENERIC_READ,FILE_SHARE_READ,NULL,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,NULL);
+        if (hFile == INVALID_HANDLE_VALUE)
+            winMessageBoxF("This authorization file for the -auth option could not be opened...\n"
+                           "\"%s\"\n"
+                           "You should use an \"Xauthority\" file in your HOME directory.\n"
+                           "\nIgnoring and continuing.\n",
+                           MB_ICONINFORMATION,
+                           pszFile);
+        else
+          CloseHandle(hFile);
         return 0;               /* Let DIX parse this again */
     }
 
@@ -1032,7 +1045,6 @@ ddxProcessArgument(int argc, char *argv[], int i)
         return 2;
     }
 
-#ifdef XWIN_CLIPBOARD
     /*
      * Look for the '-nounicodeclipboard' argument
      */
@@ -1041,7 +1053,6 @@ ddxProcessArgument(int argc, char *argv[], int i)
         /* Indicate that we have processed the argument */
         return 1;
     }
-#endif
 
     if (IS_OPTION("-xkbrules")) {
         CHECK_ARGS(1);
@@ -1118,6 +1129,11 @@ ddxProcessArgument(int argc, char *argv[], int i)
 
     if (IS_OPTION("-nohostintitle")) {
         g_fHostInTitle = FALSE;
+        return 1;
+    }
+
+    if (IS_OPTION("-codepage")) {
+        g_iActualCodePage = TRUE;
         return 1;
     }
 

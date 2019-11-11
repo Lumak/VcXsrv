@@ -415,9 +415,6 @@ extern void ProcessPointerEvent(InternalEvent * /* ev */ ,
 extern void ProcessKeyboardEvent(InternalEvent * /*ev */ ,
                                  DeviceIntPtr /*keybd */ );
 
-extern Bool LegalModifier(unsigned int /*key */ ,
-                          DeviceIntPtr /*pDev */ );
-
 extern _X_EXPORT void ProcessInputEvents(void);
 
 extern _X_EXPORT void InitInput(int /*argc */ ,
@@ -635,6 +632,7 @@ extern _X_EXPORT int NewInputDeviceRequest(InputOption *options,
                                            InputAttributes * attrs,
                                            DeviceIntPtr *dev);
 extern _X_EXPORT void DeleteInputDeviceRequest(DeviceIntPtr dev);
+extern _X_EXPORT void RemoveInputDeviceTraces(const char *config_info);
 
 extern _X_EXPORT void DDXRingBell(int volume, int pitch, int duration);
 
@@ -675,12 +673,15 @@ extern _X_EXPORT Bool valuator_mask_fetch(const ValuatorMask *mask,
                                           int valnum, int *val);
 extern _X_EXPORT Bool valuator_mask_fetch_double(const ValuatorMask *mask,
                                                  int valnum, double *val);
-
 extern _X_EXPORT Bool valuator_mask_has_unaccelerated(const ValuatorMask *mask);
 extern _X_EXPORT void valuator_mask_set_unaccelerated(ValuatorMask *mask,
                                                       int valuator,
                                                       double accel,
                                                       double unaccel);
+extern _X_EXPORT void valuator_mask_set_absolute_unaccelerated(ValuatorMask *mask,
+                                                               int valuator,
+                                                               int absolute,
+                                                               double unaccel);
 extern _X_EXPORT double valuator_mask_get_accelerated(const ValuatorMask *mask,
                                                       int valuator);
 extern _X_EXPORT double valuator_mask_get_unaccelerated(const ValuatorMask *mask,
@@ -718,6 +719,7 @@ extern _X_HIDDEN void input_constrain_cursor(DeviceIntPtr pDev, ScreenPtr screen
 extern _X_EXPORT void input_lock(void);
 extern _X_EXPORT void input_unlock(void);
 extern _X_EXPORT void input_force_unlock(void);
+extern _X_EXPORT int in_input_thread(void);
 
 extern void InputThreadPreInit(void);
 extern void InputThreadInit(void);

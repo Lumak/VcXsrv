@@ -23,8 +23,8 @@
  * PERFORMANCE OF THIS SOFTWARE.
  */
 
-#ifdef HAVE_CONFIG_H
-#include <kdrive-config.h>
+#ifdef HAVE_DIX_CONFIG_H
+#include <dix-config.h>
 #endif
 
 #include <xcb/xcb_keysyms.h>
@@ -40,7 +40,7 @@
 #include "glamor.h"
 #endif
 #include "ephyr_glamor_glx.h"
-
+#include "glx_extinit.h"
 #include "xkbsrv.h"
 
 extern Bool ephyr_glamor;
@@ -728,38 +728,13 @@ ephyrCreateResources(ScreenPtr pScreen)
                            ephyrShadowUpdate, ephyrWindowLinear);
     else {
 #ifdef GLAMOR
-        if (ephyr_glamor)
-            ephyr_glamor_create_screen_resources(pScreen);
+        if (ephyr_glamor) {
+            if (!ephyr_glamor_create_screen_resources(pScreen))
+                return FALSE;
+        }
 #endif
         return ephyrSetInternalDamage(pScreen);
     }
-}
-
-void
-ephyrPreserve(KdCardInfo * card)
-{
-}
-
-Bool
-ephyrEnable(ScreenPtr pScreen)
-{
-    return TRUE;
-}
-
-Bool
-ephyrDPMS(ScreenPtr pScreen, int mode)
-{
-    return TRUE;
-}
-
-void
-ephyrDisable(ScreenPtr pScreen)
-{
-}
-
-void
-ephyrRestore(KdCardInfo * card)
-{
 }
 
 void
@@ -1339,6 +1314,7 @@ MouseDisable(KdPointerInfo * pi)
 static void
 MouseFini(KdPointerInfo * pi)
 {
+    free(pi->driverPrivate);
     ephyrMouse = NULL;
     return;
 }
@@ -1402,6 +1378,7 @@ EphyrKeyboardDisable(KdKeyboardInfo * ki)
 static void
 EphyrKeyboardFini(KdKeyboardInfo * ki)
 {
+    free(ki->driverPrivate);
     ephyrKbd = NULL;
     return;
 }

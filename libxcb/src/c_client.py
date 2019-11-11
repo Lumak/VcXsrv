@@ -438,7 +438,11 @@ def _c_type_setup(self, name, postfix):
         first_field_after_varsized = None
 
         for field in self.fields:
-            field.c_field_type = _t(field.field_type)
+            if field.type.is_event:
+                field.c_field_type = _t(field.field_type + ('event',))
+            else:
+                field.c_field_type = _t(field.field_type)
+
             field.c_field_const_type = ('' if field.type.nmemb == 1 else 'const ') + field.c_field_type
             field.c_field_name = _cpp(field.field_name)
             field.c_subscript = '[%d]' % field.type.nmemb if (field.type.nmemb and field.type.nmemb > 1) else ''
@@ -455,7 +459,7 @@ def _c_type_setup(self, name, postfix):
                 field.c_field_const_type = 'const ' + field.c_field_type
                 self.c_need_aux = True
 
-            if not field.type.fixed_size() and not field.type.is_case_or_bitcase:
+            if not field.type.fixed_size() and not field.type.is_case_or_bitcase and field.wire:
                 self.c_need_sizeof = True
 
             field.c_iterator_type = _t(field.field_type + ('iterator',))      # xcb_fieldtype_iterator_t
@@ -494,7 +498,7 @@ def _c_type_setup(self, name, postfix):
             _c_type_setup(field.type, field.field_type, ())
             if field.type.is_list:
                 _c_type_setup(field.type.member, field.field_type, ())
-                if (field.type.nmemb is None):
+                if (field.type.nmemb is None and field.wire):
                     self.c_need_sizeof = True
 
     if self.c_need_serialize:
@@ -1167,6 +1171,8 @@ def _c_serialize_helper_fields(context, self,
     _c_pre.push_indent(space + '    ')
 
     for field in self.fields:
+        if not field.wire:
+            continue
         if not field.visible:
             if not ((field.wire and not field.auto) or 'unserialize' == context):
                 continue
@@ -1191,7 +1197,9 @@ def _c_serialize_helper_fields(context, self,
 
         # fields with variable size
         else:
-            if field.type.is_pad:
+            if not field.wire:
+                continue
+            elif field.type.is_pad:
                 # Variable length pad is <pad align= />
                 code_lines.append('%s    xcb_align_to = %d;' % (space, field.type.align))
                 count += _c_serialize_helper_insert_padding(context, self, code_lines, space,
@@ -1662,14 +1670,7 @@ def _c_accessor_get_expr(expr, field_mapping):
         return c_name
     elif expr.op == 'sumof':
         # locate the referenced list object
-        field = None
-        for f in expr.lenfield_parent.fields:
-            if f.field_name == expr.lenfield_name:
-                field = f
-                break
-
-        if field is None:
-            raise Exception("list field '%s' referenced by sumof not found" % expr.lenfield_name)
+        field = expr.lenfield
         list_name = field_mapping[field.c_field_name][0]
         c_length_func = "%s(%s)" % (field.c_length_name, list_name)
         c_length_func = _c_accessor_get_expr(field.type.expr, field_mapping)
@@ -2312,7 +2313,7 @@ def _c_request_helper(self, name, void, regular, aux=False, reply_fds=False):
     count = 2
     if not self.c_var_followed_by_fixed_fields:
         for field in param_fields:
-            if not field.type.fixed_size():
+            if not field.type.fixed_size() and field.wire:
                 count = count + 2
                 if field.type.c_need_serialize:
                     # _serialize() keeps track of padding automatically
@@ -2340,12 +2341,30 @@ def _c_request_helper(self, name, void, regular, aux=False, reply_fds=False):
         if aux:
             _c('    void *xcb_aux%d = 0;' % (idx))
     if list_with_var_size_elems:
-        _c('    unsigned int i;')
         _c('    unsigned int xcb_tmp_len;')
         _c('    char *xcb_tmp;')
-    num_fds = len([field for field in param_fields if field.isfd])
-    if num_fds > 0:
-        _c('    int fds[%d];' % (num_fds))
+
+    num_fds_fixed = 0
+    num_fds_expr = []
+    for field in param_fields:
+        if field.isfd:
+            if not field.type.is_list:
+                num_fds_fixed += 1
+            else:
+                num_fds_expr.append(_c_accessor_get_expr(field.type.expr, None))
+
+    if list_with_var_size_elems or len(num_fds_expr) > 0:
+        _c('    unsigned int i;')
+
+    if num_fds_fixed > 0:
+        num_fds_expr.append('%d' % (num_fds_fixed))
+    if len(num_fds_expr) > 0:
+        num_fds = '+'.join(num_fds_expr)
+        _c('    int *fds=(int*)_alloca(%s*sizeof(int));' % (num_fds))
+        _c('    int fd_index = 0;')
+    else:
+        num_fds = None
+
     _c('')
 
     # fixed size fields
@@ -2383,7 +2402,7 @@ def _c_request_helper(self, name, void, regular, aux=False, reply_fds=False):
         count = 4
 
         for field in param_fields:
-            if not field.type.fixed_size():
+            if field.wire and not field.type.fixed_size():
                 _c('    /* %s %s */', field.type.c_type, field.c_field_name)
                 # default: simple cast to char *
                 if not field.type.c_need_serialize and not field.type.c_need_sizeof:
@@ -2451,16 +2470,18 @@ def _c_request_helper(self, name, void, regular, aux=False, reply_fds=False):
         # no padding necessary - _serialize() keeps track of padding automatically
 
     _c('')
-    fd_index = 0
     for field in param_fields:
         if field.isfd:
-            _c('    fds[%d] = %s;', fd_index, field.c_field_name)
-            fd_index = fd_index + 1
+            if not field.type.is_list:
+                _c('    fds[fd_index++] = %s;', field.c_field_name)
+            else:
+                _c('    for (i = 0; i < %s; i++)', _c_accessor_get_expr(field.type.expr, None))
+                _c('        fds[fd_index++] = %s[i];', field.c_field_name)
 
-    if num_fds == 0:
+    if not num_fds:
         _c('    xcb_ret.sequence = xcb_send_request(c, %s, xcb_parts + 2, &xcb_req);', func_flags)
     else:
-        _c('    xcb_ret.sequence = xcb_send_request_with_fds(c, %s, xcb_parts + 2, &xcb_req, %d, fds);', func_flags, num_fds)
+        _c('    xcb_ret.sequence = xcb_send_request_with_fds(c, %s, xcb_parts + 2, &xcb_req, %s, fds);', func_flags, num_fds)
 
     # free dyn. all. data, if any
     for f in free_calls:
@@ -3164,6 +3185,28 @@ def c_request(self, name):
     # TODO: what about aux helpers?
     _man_request(self, name, void=not self.reply, aux=False)
 
+
+def c_eventstruct(self, name):
+    #add fields that are needed to get the event-type in a generic way
+    self.fields.append( Field( tevent, tevent.name, 'event_header', False, True, True) )
+
+    if self.contains_ge_events:
+        #TODO: add header of ge-events as an extra field
+        raise Exception( 'eventstructs with ge-events are not yet supported' )
+
+    _c_type_setup(self, name, ())
+
+    #correct the format of the field names
+    for field in self.fields:
+        field.c_field_name = _n_item(field.c_field_name).lower()
+
+    _c_complex(self)
+    _c_iterator(self, name)
+
+    if not self.fixed_size():
+        #TODO: Create sizeof function (and maybe other accessors) for var-sized eventstructs
+        raise Exception( 'var sized eventstructs are not yet supported' )
+
 def c_event(self, name):
     '''
     Exported function that handles event declarations.
@@ -3261,6 +3304,7 @@ output = {'open'    : c_open,
           'struct'  : c_struct,
           'union'   : c_union,
           'request' : c_request,
+          'eventstruct' : c_eventstruct,
           'event'   : c_event,
           'error'   : c_error,
           }
@@ -3303,6 +3347,9 @@ to extend the path.
 Refer to the README file in xcb/proto for more info.
 ''')
     raise
+
+# predefined datatype globals.
+tevent = SimpleType(('xcb_raw_generic_event_t',), 32)
 
 # Ensure the man subdirectory exists
 try:

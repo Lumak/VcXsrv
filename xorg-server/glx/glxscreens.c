@@ -42,11 +42,16 @@
 #include <os.h>
 #include <colormapst.h>
 
+#include "extinit.h"
 #include "privates.h"
 #include "glxserver.h"
 #include "glxutil.h"
 #include "glxext.h"
 #include "protocol-versions.h"
+
+#ifdef COMPOSITE
+#include "compositeext.h"
+#endif
 
 static DevPrivateKeyRec glxScreenPrivateKeyRec;
 
@@ -176,13 +181,6 @@ glxGetScreen(ScreenPtr pScreen)
     return dixLookupPrivate(&pScreen->devPrivates, glxScreenPrivateKey);
 }
 
-_X_EXPORT void
-GlxSetVisualConfigs(int nconfigs, void *configs, void **privates)
-{
-    /* We keep this stub around for the DDX drivers that still
-     * call it. */
-}
-
 GLint
 glxConvertToXVisualType(int visualType)
 {
@@ -278,10 +276,31 @@ pickFBConfig(__GLXscreen * pGlxScreen, VisualPtr visual)
         /* If it's the 32-bit RGBA visual, demand a 32-bit fbconfig. */
         if (visual->nplanes == 32 && config->rgbBits != 32)
             continue;
+        /* If it's the 32-bit RGBA visual, do not pick sRGB capable config.
+         * This can cause issues with compositors that are not sRGB aware.
+         */
+        if (visual->nplanes == 32 && config->sRGBCapable == GL_TRUE)
+            continue;
         /* Can't use the same FBconfig for multiple X visuals.  I think. */
         if (config->visualID != 0)
             continue;
-
+#ifdef COMPOSITE
+        if (!noCompositeExtension) {
+            /* Use only duplicated configs for compIsAlternateVisuals */
+            if (!!compIsAlternateVisual(pGlxScreen->pScreen, visual->vid) !=
+                !!config->duplicatedForComp)
+                continue;
+        }
+#endif
+        /*
+         * If possible, use the same swapmethod for all built-in visual
+         * fbconfigs, to avoid getting the 32-bit composite visual when
+         * requesting, for example, a SWAP_COPY fbconfig.
+         */
+        if (config->swapMethod == GLX_SWAP_UNDEFINED_OML)
+            score += 32;
+        if (config->swapMethod == GLX_SWAP_EXCHANGE_OML)
+            score += 16;
         if (config->doubleBufferMode > 0)
             score += 8;
         if (config->depthBits > 0)
@@ -340,6 +359,12 @@ __glXScreenInit(__GLXscreen * pGlxScreen, ScreenPtr pScreen)
         if (config) {
             pGlxScreen->visuals[pGlxScreen->numVisuals++] = config;
             config->visualID = visual->vid;
+#ifdef COMPOSITE
+            if (!noCompositeExtension) {
+                if (compIsAlternateVisual(pScreen, visual->vid))
+                    config->visualSelectGroup++;
+            }
+#endif
         }
     }
 
@@ -359,7 +384,14 @@ __glXScreenInit(__GLXscreen * pGlxScreen, ScreenPtr pScreen)
          * set up above is for.
          */
         depth = config->redBits + config->greenBits + config->blueBits;
-
+#ifdef COMPOSITE
+        if (!noCompositeExtension) {
+            if (config->duplicatedForComp) {
+                    depth += config->alphaBits;
+                    config->visualSelectGroup++;
+            }
+        }
+#endif
         /* Make sure that our FBconfig's depth can actually be displayed
          * (corresponds to an existing visual).
          */
@@ -382,8 +414,15 @@ __glXScreenInit(__GLXscreen * pGlxScreen, ScreenPtr pScreen)
         if (visual == NULL)
             continue;
 
+#ifdef COMPOSITE
+        if (!noCompositeExtension) {
+            if (config->duplicatedForComp)
+                (void) CompositeRegisterAlternateVisuals(pScreen, &visual->vid, 1);
+        }
+#endif
         pGlxScreen->visuals[pGlxScreen->numVisuals++] = config;
         initGlxVisual(visual, config);
+        visual->nplanes = depth;  /* sometimes initGlxVisual create a wrong value for nplanes, causing a heap corruption later on */
     }
 
     dixSetPrivate(&pScreen->devPrivates, glxScreenPrivateKey, pGlxScreen);
@@ -403,8 +442,15 @@ __glXScreenInit(__GLXscreen * pGlxScreen, ScreenPtr pScreen)
 void
 __glXScreenDestroy(__GLXscreen * screen)
 {
+    __GLXconfig *config, *next;
+
     free(screen->glvnd);
     free(screen->GLXextensions);
     free(screen->GLextensions);
     free(screen->visuals);
+
+    for (config = screen->fbconfigs; config != NULL; config = next) {
+        next = config->next;
+        free(config);
+    }
 }

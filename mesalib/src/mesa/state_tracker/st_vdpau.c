@@ -31,6 +31,8 @@
  *
  */
 
+#ifdef HAVE_ST_VDPAU
+
 #include "main/texobj.h"
 #include "main/teximage.h"
 #include "main/errors.h"
@@ -43,11 +45,10 @@
 
 #include "st_vdpau.h"
 #include "st_context.h"
+#include "st_sampler_view.h"
 #include "st_texture.h"
 #include "st_format.h"
 #include "st_cb_flush.h"
-
-#ifdef HAVE_ST_VDPAU
 
 #include "state_tracker/vdpau_interop.h"
 #include "state_tracker/vdpau_dmabuf.h"
@@ -126,13 +127,13 @@ st_vdpau_resource_from_description(struct gl_context *ctx,
    templ.usage = PIPE_USAGE_DEFAULT;
 
    memset(&whandle, 0, sizeof(whandle));
-   whandle.type = DRM_API_HANDLE_TYPE_FD;
+   whandle.type = WINSYS_HANDLE_TYPE_FD;
    whandle.handle = desc->handle;
    whandle.offset = desc->offset;
    whandle.stride = desc->stride;
 
    res = st->pipe->screen->resource_from_handle(st->pipe->screen, &templ, &whandle,
-						PIPE_HANDLE_USAGE_READ_WRITE);
+						PIPE_HANDLE_USAGE_FRAMEBUFFER_WRITE);
    close(desc->handle);
 
    return res;
@@ -188,8 +189,8 @@ st_vdpau_map_surface(struct gl_context *ctx, GLenum target, GLenum access,
    struct st_texture_image *stImage = st_texture_image(texImage);
 
    struct pipe_resource *res;
-   struct pipe_sampler_view templ, **sampler_view;
    mesa_format texFormat;
+   uint layer_override = 0;
 
    if (output) {
       res = st_vdpau_output_surface_dma_buf(ctx, vdpSurface);
@@ -200,8 +201,10 @@ st_vdpau_map_surface(struct gl_context *ctx, GLenum target, GLenum access,
    } else {
       res = st_vdpau_video_surface_dma_buf(ctx, vdpSurface, index);
 
-      if (!res)
+      if (!res) {
          res = st_vdpau_video_surface_gallium(ctx, vdpSurface, index);
+         layer_override = index & 1;
+      }
    }
 
    if (!res) {
@@ -218,7 +221,7 @@ st_vdpau_map_surface(struct gl_context *ctx, GLenum target, GLenum access,
 
    /* switch to surface based */
    if (!stObj->surface_based) {
-      _mesa_clear_texture_object(ctx, texObj);
+      _mesa_clear_texture_object(ctx, texObj, NULL);
       stObj->surface_based = GL_TRUE;
    }
 
@@ -232,18 +235,9 @@ st_vdpau_map_surface(struct gl_context *ctx, GLenum target, GLenum access,
    st_texture_release_all_sampler_views(st, stObj);
    pipe_resource_reference(&stImage->pt, res);
 
-   u_sampler_view_default_template(&templ, res, res->format);
-   templ.u.tex.first_layer = index & 1;
-   templ.u.tex.last_layer = index & 1;
-   templ.swizzle_r = GET_SWZ(stObj->base._Swizzle, 0);
-   templ.swizzle_g = GET_SWZ(stObj->base._Swizzle, 1);
-   templ.swizzle_b = GET_SWZ(stObj->base._Swizzle, 2);
-   templ.swizzle_a = GET_SWZ(stObj->base._Swizzle, 3);
-
-   sampler_view = st_texture_get_sampler_view(st, stObj);
-   *sampler_view = st->pipe->create_sampler_view(st->pipe, res, &templ);
-
    stObj->surface_format = res->format;
+   stObj->level_override = 0;
+   stObj->layer_override = layer_override;
 
    _mesa_dirty_texobj(ctx, texObj);
    pipe_resource_reference(&res, NULL);
@@ -263,18 +257,21 @@ st_vdpau_unmap_surface(struct gl_context *ctx, GLenum target, GLenum access,
    st_texture_release_all_sampler_views(st, stObj);
    pipe_resource_reference(&stImage->pt, NULL);
 
+   stObj->level_override = 0;
+   stObj->layer_override = 0;
+
    _mesa_dirty_texobj(ctx, texObj);
 
+   /* NV_vdpau_interop does not specify an explicit synchronization mechanism
+    * between the GL and VDPAU contexts. Provide automatic synchronization here.
+    */
    st_flush(st, NULL, 0);
 }
-
-#endif
 
 void
 st_init_vdpau_functions(struct dd_function_table *functions)
 {
-#ifdef HAVE_ST_VDPAU
    functions->VDPAUMapSurface = st_vdpau_map_surface;
    functions->VDPAUUnmapSurface = st_vdpau_unmap_surface;
-#endif
 }
+#endif

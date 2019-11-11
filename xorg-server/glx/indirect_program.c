@@ -41,14 +41,13 @@
 #include "unpack.h"
 #include "indirect_size_get.h"
 #include "indirect_dispatch.h"
+#include "glfunctions.h"
 
 /**
  * Handle both types of glGetProgramString calls.
  */
 static int
 DoGetProgramString(struct __GLXclientStateRec *cl, GLbyte * pc,
-                   PFNGLGETPROGRAMIVARBPROC get_programiv,
-                   PFNGLGETPROGRAMSTRINGARBPROC get_program_string,
                    Bool do_swap)
 {
     xGLXVendorPrivateWithReplyReq *const req =
@@ -65,6 +64,7 @@ DoGetProgramString(struct __GLXclientStateRec *cl, GLbyte * pc,
         GLenum pname;
         GLint compsize = 0;
         char *answer = NULL, answerBuffer[200];
+        xGLXSingleReply reply = { 0, };
 
         if (do_swap) {
             target = (GLenum) bswap_32(*(int *) (pc + 0));
@@ -78,13 +78,13 @@ DoGetProgramString(struct __GLXclientStateRec *cl, GLbyte * pc,
         /* The value of the GL_PROGRAM_LENGTH_ARB and GL_PROGRAM_LENGTH_NV
          * enumerants is the same.
          */
-        get_programiv(target, GL_PROGRAM_LENGTH_ARB, &compsize);
+        glGetProgramivARB(target, GL_PROGRAM_LENGTH_ARB, &compsize);
 
         if (compsize != 0) {
             __GLX_GET_ANSWER_BUFFER(answer, cl, compsize, 1);
             __glXClearErrorOccured();
 
-            get_program_string(target, pname, (GLubyte *) answer);
+            glGetProgramStringARB(target, pname, (GLubyte *) answer);
         }
 
         if (__glXErrorOccured()) {
@@ -93,7 +93,7 @@ DoGetProgramString(struct __GLXclientStateRec *cl, GLbyte * pc,
         }
         else {
             __GLX_BEGIN_REPLY(compsize);
-            ((xGLXGetTexImageReply *) &__glXReply)->width = compsize;
+            ((xGLXGetTexImageReply *) &reply)->width = compsize;
             __GLX_SEND_HEADER();
             __GLX_SEND_VOID_ARRAY(compsize);
         }
@@ -107,43 +107,23 @@ DoGetProgramString(struct __GLXclientStateRec *cl, GLbyte * pc,
 int
 __glXDisp_GetProgramStringARB(struct __GLXclientStateRec *cl, GLbyte * pc)
 {
-    PFNGLGETPROGRAMIVARBPROC get_program =
-        __glGetProcAddress("glGetProgramivARB");
-    PFNGLGETPROGRAMSTRINGARBPROC get_program_string =
-        __glGetProcAddress("glGetProgramStringARB");
-
-    return DoGetProgramString(cl, pc, get_program, get_program_string, False);
+    return DoGetProgramString(cl, pc, FALSE);
 }
 
 int
 __glXDispSwap_GetProgramStringARB(struct __GLXclientStateRec *cl, GLbyte * pc)
 {
-    PFNGLGETPROGRAMIVARBPROC get_program =
-        __glGetProcAddress("glGetProgramivARB");
-    PFNGLGETPROGRAMSTRINGARBPROC get_program_string =
-        __glGetProcAddress("glGetProgramStringARB");
-
-    return DoGetProgramString(cl, pc, get_program, get_program_string, True);
+    return DoGetProgramString(cl, pc, TRUE);
 }
 
 int
 __glXDisp_GetProgramStringNV(struct __GLXclientStateRec *cl, GLbyte * pc)
 {
-    PFNGLGETPROGRAMIVARBPROC get_program =
-        __glGetProcAddress("glGetProgramivARB");
-    PFNGLGETPROGRAMSTRINGARBPROC get_program_string =
-        __glGetProcAddress("glGetProgramStringARB");
-
-    return DoGetProgramString(cl, pc, get_program, get_program_string, False);
+    return DoGetProgramString(cl, pc, FALSE);
 }
 
 int
 __glXDispSwap_GetProgramStringNV(struct __GLXclientStateRec *cl, GLbyte * pc)
 {
-    PFNGLGETPROGRAMIVARBPROC get_program =
-        __glGetProcAddress("glGetProgramivARB");
-    PFNGLGETPROGRAMSTRINGARBPROC get_program_string =
-        __glGetProcAddress("glGetProgramStringARB");
-
-    return DoGetProgramString(cl, pc, get_program, get_program_string, True);
+    return DoGetProgramString(cl, pc, TRUE);
 }

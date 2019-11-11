@@ -54,6 +54,12 @@ SOFTWARE.
 #ifdef MONOTONIC_CLOCK
 #include <time.h>
 #endif
+#if defined(HAVE_LIBBSD) && defined(HAVE_REALLOCARRAY)
+#include <bsd/stdlib.h>       /* for reallocarray */
+#endif
+#if defined(HAVE_LIBBSD) && defined(HAVE_STRLCPY)
+#include <bsd/string.h>       /* for strlcpy, strlcat */
+#endif
 
 #define SCREEN_SAVER_ON   0
 #define SCREEN_SAVER_OFF  1
@@ -100,11 +106,9 @@ extern _X_EXPORT Bool WaitForSomething(Bool clients_are_ready);
 
 extern _X_EXPORT int ReadRequestFromClient(ClientPtr /*client */ );
 
-#if XTRANS_SEND_FDS
 extern _X_EXPORT int ReadFdFromClient(ClientPtr client);
 
 extern _X_EXPORT int WriteFdToClient(ClientPtr client, int fd, Bool do_close);
-#endif
 
 extern _X_EXPORT Bool InsertFakeRequest(ClientPtr /*client */ ,
                                         char * /*data */ ,
@@ -125,8 +129,6 @@ extern _X_EXPORT void ResetOsBuffers(void);
 
 extern _X_EXPORT int TransIsListening(char *protocol);
 
-extern _X_EXPORT void InitConnectionLimits(void);
-
 extern _X_EXPORT void NotifyParentProcess(void);
 
 extern _X_EXPORT void CreateWellKnownSockets(void);
@@ -143,7 +145,7 @@ extern _X_EXPORT const char *ClientAuthorized(ClientPtr /*client */ ,
                                               unsigned int /*string_n */ ,
                                               char * /*auth_string */ );
 
-extern _X_EXPORT Bool EstablishNewConnections(ClientPtr clientUnused,
+extern _X_EXPORT void EstablishNewConnections(ClientPtr clientUnused,
                                               void *closure);
 
 extern _X_EXPORT void CloseDownConnection(ClientPtr /*client */ );
@@ -367,6 +369,9 @@ System(const char *cmdline);
 #define Fclose(a) fclose(a)
 #endif
 
+extern _X_EXPORT Bool
+PrivsElevated(void);
+
 extern _X_EXPORT void
 CheckUserParameters(int argc, char **argv, char **envp);
 extern _X_EXPORT void
@@ -471,7 +476,7 @@ AccessUsingXdmcp(void);
 extern _X_EXPORT void
 DefineSelf(int /*fd */ );
 
-#if XDMCP
+#ifdef XDMCP
 extern _X_EXPORT void
 AugmentSelf(void *from, int len);
 
@@ -526,6 +531,13 @@ GenerateAuthorization(unsigned int /* name_length */ ,
 extern _X_EXPORT int
 ddxProcessArgument(int /*argc */ , char * /*argv */ [], int /*i */ );
 
+#define CHECK_FOR_REQUIRED_ARGUMENTS(num)  \
+    do if (((i + num) >= argc) || (!argv[i + num])) {                   \
+        UseMsg();                                                       \
+        FatalError("Required argument to %s not specified\n", argv[i]); \
+    } while (0)
+
+
 extern _X_EXPORT void
 ddxUseMsg(void);
 
@@ -550,8 +562,6 @@ enum ExitCode {
     EXIT_ERR_DRIVERS = 3,
 };
 
-extern _X_EXPORT void
-AbortDDX(enum ExitCode error);
 extern _X_EXPORT void
 ddxGiveUp(enum ExitCode error);
 extern _X_EXPORT int
@@ -593,6 +603,11 @@ strlcat(char *dst, const char *src, size_t siz);
 #ifndef HAVE_STRNDUP
 extern _X_EXPORT char *
 strndup(const char *str, size_t n);
+#endif
+
+#ifndef HAVE_TIMINGSAFE_MEMCMP
+extern _X_EXPORT int
+timingsafe_memcmp(const void *b1, const void *b2, size_t len);
 #endif
 
 /* Logging. */

@@ -32,23 +32,33 @@
  * Implements a small peephole optimization that looks for
  *
  * if (cond) {
- *    <empty>
+ *    <then SSA defs>
  * } else {
- *    <empty>
+ *    <else SSA defs>
  * }
  * phi
  * ...
  * phi
  *
- * and replaces it with a series of selects.  It can also handle the case
- * where, instead of being empty, the if may contain some move operations
- * whose only use is one of the following phi nodes.  This happens all the
- * time when the SSA form comes from a conditional assignment with a
- * swizzle.
+ * and replaces it with:
+ *
+ * <then SSA defs>
+ * <else SSA defs>
+ * bcsel
+ * ...
+ * bcsel
+ *
+ * where the SSA defs are ALU operations or other cheap instructions (not
+ * texturing, for example).
+ *
+ * If the number of ALU operations in the branches is greater than the limit
+ * parameter, then the optimization is skipped.  In limit=0 mode, the SSA defs
+ * must only be MOVs which we expect to get copy-propagated away once they're
+ * out of the inner blocks.
  */
 
 static bool
-block_check_for_allowed_instrs(nir_block *block)
+block_check_for_allowed_instrs(nir_block *block, unsigned *count, bool alu_ok)
 {
    nir_foreach_instr(instr, block) {
       switch (instr->type) {
@@ -56,8 +66,8 @@ block_check_for_allowed_instrs(nir_block *block)
          nir_intrinsic_instr *intrin = nir_instr_as_intrinsic(instr);
 
          switch (intrin->intrinsic) {
-         case nir_intrinsic_load_var:
-            switch (intrin->variables[0]->var->data.mode) {
+         case nir_intrinsic_load_deref:
+            switch (nir_src_as_deref(intrin->src[0])->mode) {
             case nir_var_shader_in:
             case nir_var_uniform:
                break;
@@ -67,6 +77,11 @@ block_check_for_allowed_instrs(nir_block *block)
             }
             break;
 
+         case nir_intrinsic_load_uniform:
+            if (!alu_ok)
+               return false;
+            break;
+
          default:
             return false;
          }
@@ -74,6 +89,7 @@ block_check_for_allowed_instrs(nir_block *block)
          break;
       }
 
+      case nir_instr_type_deref:
       case nir_instr_type_load_const:
          break;
 
@@ -89,29 +105,36 @@ block_check_for_allowed_instrs(nir_block *block)
          case nir_op_vec2:
          case nir_op_vec3:
          case nir_op_vec4:
-            /* It must be a move-like operation. */
             break;
          default:
-            return false;
+            if (!alu_ok) {
+               /* It must be a move-like operation. */
+               return false;
+            }
+            break;
          }
-
-         /* Can't handle saturate */
-         if (mov->dest.saturate)
-            return false;
 
          /* It must be SSA */
          if (!mov->dest.dest.is_ssa)
             return false;
 
-         /* It cannot have any if-uses */
-         if (!list_empty(&mov->dest.dest.ssa.if_uses))
-            return false;
-
-         /* The only uses of this definition must be phi's in the successor */
-         nir_foreach_use(use, &mov->dest.dest.ssa) {
-            if (use->parent_instr->type != nir_instr_type_phi ||
-                use->parent_instr->block != block->successors[0])
+         if (alu_ok) {
+            (*count)++;
+         } else {
+            /* Can't handle saturate */
+            if (mov->dest.saturate)
                return false;
+
+            /* It cannot have any if-uses */
+            if (!list_empty(&mov->dest.dest.ssa.if_uses))
+               return false;
+
+            /* The only uses of this definition must be phis in the successor */
+            nir_foreach_use(use, &mov->dest.dest.ssa) {
+               if (use->parent_instr->type != nir_instr_type_phi ||
+                   use->parent_instr->block != block->successors[0])
+                  return false;
+            }
          }
          break;
       }
@@ -125,7 +148,8 @@ block_check_for_allowed_instrs(nir_block *block)
 }
 
 static bool
-nir_opt_peephole_select_block(nir_block *block, void *mem_ctx)
+nir_opt_peephole_select_block(nir_block *block, nir_shader *shader,
+                              unsigned limit)
 {
    if (nir_cf_node_is_first(&block->cf_node))
       return false;
@@ -135,20 +159,21 @@ nir_opt_peephole_select_block(nir_block *block, void *mem_ctx)
       return false;
 
    nir_if *if_stmt = nir_cf_node_as_if(prev_node);
-   nir_cf_node *then_node = nir_if_first_then_node(if_stmt);
-   nir_cf_node *else_node = nir_if_first_else_node(if_stmt);
+   nir_block *then_block = nir_if_first_then_block(if_stmt);
+   nir_block *else_block = nir_if_first_else_block(if_stmt);
 
    /* We can only have one block in each side ... */
-   if (nir_if_last_then_node(if_stmt) != then_node ||
-       nir_if_last_else_node(if_stmt) != else_node)
+   if (nir_if_last_then_block(if_stmt) != then_block ||
+       nir_if_last_else_block(if_stmt) != else_block)
       return false;
 
-   nir_block *then_block = nir_cf_node_as_block(then_node);
-   nir_block *else_block = nir_cf_node_as_block(else_node);
-
    /* ... and those blocks must only contain "allowed" instructions. */
-   if (!block_check_for_allowed_instrs(then_block) ||
-       !block_check_for_allowed_instrs(else_block))
+   unsigned count = 0;
+   if (!block_check_for_allowed_instrs(then_block, &count, limit != 0) ||
+       !block_check_for_allowed_instrs(else_block, &count, limit != 0))
+      return false;
+
+   if (count > limit)
       return false;
 
    /* At this point, we know that the previous CFG node is an if-then
@@ -158,7 +183,6 @@ nir_opt_peephole_select_block(nir_block *block, void *mem_ctx)
     */
 
    nir_block *prev_block = nir_cf_node_as_block(nir_cf_node_prev(prev_node));
-   assert(prev_block->cf_node.type == nir_cf_node_block);
 
    /* First, we move the remaining instructions from the blocks to the
     * block before.  We have already guaranteed that this is safe by
@@ -181,7 +205,7 @@ nir_opt_peephole_select_block(nir_block *block, void *mem_ctx)
          break;
 
       nir_phi_instr *phi = nir_instr_as_phi(instr);
-      nir_alu_instr *sel = nir_alu_instr_create(mem_ctx, nir_op_bcsel);
+      nir_alu_instr *sel = nir_alu_instr_create(shader, nir_op_bcsel);
       nir_src_copy(&sel->src[0].src, &if_stmt->condition, sel);
       /* Splat the condition to all channels */
       memset(sel->src[0].swizzle, 0, sizeof sel->src[0].swizzle);
@@ -212,13 +236,13 @@ nir_opt_peephole_select_block(nir_block *block, void *mem_ctx)
 }
 
 static bool
-nir_opt_peephole_select_impl(nir_function_impl *impl)
+nir_opt_peephole_select_impl(nir_function_impl *impl, unsigned limit)
 {
-   void *mem_ctx = ralloc_parent(impl);
+   nir_shader *shader = impl->function->shader;
    bool progress = false;
 
    nir_foreach_block_safe(block, impl) {
-      progress |= nir_opt_peephole_select_block(block, mem_ctx);
+      progress |= nir_opt_peephole_select_block(block, shader, limit);
    }
 
    if (progress)
@@ -228,13 +252,13 @@ nir_opt_peephole_select_impl(nir_function_impl *impl)
 }
 
 bool
-nir_opt_peephole_select(nir_shader *shader)
+nir_opt_peephole_select(nir_shader *shader, unsigned limit)
 {
    bool progress = false;
 
    nir_foreach_function(function, shader) {
       if (function->impl)
-         progress |= nir_opt_peephole_select_impl(function->impl);
+         progress |= nir_opt_peephole_select_impl(function->impl, limit);
    }
 
    return progress;

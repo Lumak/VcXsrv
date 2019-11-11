@@ -10,9 +10,13 @@
 #define HAVE__MKTEMP_S 1
 #define FC_CACHEDIR getenv("TEMP")
 #define FC_DEFAULT_FONTS "fonts"
+#define FC_GPERF_SIZE_T size_t
 #ifdef _WIN64
 #define SIZEOF_VOID_P 8
 #else
 #define SIZEOF_VOID_P 4
+#endif
+#ifndef PATH_MAX
+#define PATH_MAX 1024
 #endif
 

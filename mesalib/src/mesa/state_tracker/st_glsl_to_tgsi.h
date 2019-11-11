@@ -22,7 +22,11 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
+#ifndef ST_GLSL_TO_TGSI_H
+#define ST_GLSL_TO_TGSI_H
+
 #include "pipe/p_defines.h"
+#include "pipe/p_shader_tokens.h"
 #include "main/mtypes.h"
 
 #ifdef __cplusplus
@@ -37,20 +41,18 @@ struct ureg_program;
 
 enum pipe_error st_translate_program(
    struct gl_context *ctx,
-   uint procType,
+   enum pipe_shader_type procType,
    struct ureg_program *ureg,
    struct glsl_to_tgsi_visitor *program,
    const struct gl_program *proginfo,
    GLuint numInputs,
-   const GLuint inputMapping[],
-   const GLuint inputSlotToAttr[],
+   const ubyte inputMapping[],
+   const ubyte inputSlotToAttr[],
    const ubyte inputSemanticName[],
    const ubyte inputSemanticIndex[],
-   const GLuint interpMode[],
-   const GLuint interpLocation[],
+   const ubyte interpMode[],
    GLuint numOutputs,
-   const GLuint outputMapping[],
-   const GLuint outputSlotToAttr[],
+   const ubyte outputMapping[],
    const ubyte outputSemanticName[],
    const ubyte outputSemanticIndex[]);
 
@@ -59,18 +61,15 @@ void free_glsl_to_tgsi_visitor(struct glsl_to_tgsi_visitor *v);
 GLboolean st_link_shader(struct gl_context *ctx, struct gl_shader_program *prog);
 
 void
-st_translate_stream_output_info(struct glsl_to_tgsi_visitor *glsl_to_tgsi,
-                                const GLuint outputMapping[],
+st_translate_stream_output_info(struct gl_transform_feedback_info *info,
+                                const ubyte outputMapping[],
                                 struct pipe_stream_output_info *so);
 
-void
-st_translate_stream_output_info2(struct gl_transform_feedback_info *info,
-                                const GLuint outputMapping[],
-                                struct pipe_stream_output_info *so);
-
-unsigned
+enum tgsi_semantic
 _mesa_sysval_to_semantic(unsigned sysval);
 
 #ifdef __cplusplus
 }
+#endif
+
 #endif

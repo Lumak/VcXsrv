@@ -546,6 +546,7 @@ _mesa_bytes_per_vertex_attrib(GLint comps, GLenum type)
    case GL_FLOAT:
       return comps * sizeof(GLfloat);
    case GL_HALF_FLOAT_ARB:
+   case GL_HALF_FLOAT_OES:
       return comps * sizeof(GLhalfARB);
    case GL_DOUBLE:
       return comps * sizeof(GLdouble);
@@ -562,6 +563,8 @@ _mesa_bytes_per_vertex_attrib(GLint comps, GLenum type)
          return sizeof(GLuint);
       else
          return -1;
+   case GL_UNSIGNED_INT64_ARB:
+      return comps * 8;
    default:
       return -1;
    }
@@ -1628,33 +1631,6 @@ _mesa_base_format_has_channel(GLenum base_format, GLenum pname)
 
 
 /**
- * Returns the number of channels/components for a base format.
- */
-GLint
-_mesa_base_format_component_count(GLenum base_format)
-{
-   switch (base_format) {
-   case GL_LUMINANCE:
-   case GL_RED:
-   case GL_ALPHA:
-   case GL_INTENSITY:
-   case GL_DEPTH_COMPONENT:
-      return 1;
-   case GL_RG:
-   case GL_LUMINANCE_ALPHA:
-   case GL_DEPTH_STENCIL:
-      return 2;
-   case GL_RGB:
-      return 3;
-   case GL_RGBA:
-      return 4;
-   default:
-      return -1;
-   }
-}
-
-
-/**
  * If format is a generic compressed format, return the corresponding
  * non-compressed format.  For other formats, return the format as-is.
  */
@@ -2233,7 +2209,8 @@ _mesa_es_error_check_format_and_type(const struct gl_context *ctx,
                     || type == GL_UNSIGNED_SHORT_5_5_5_1
                     || type == GL_FLOAT
                     || type == GL_HALF_FLOAT_OES
-                    || type == GL_UNSIGNED_INT_2_10_10_10_REV);
+                    || (ctx->Extensions.EXT_texture_type_2_10_10_10_REV &&
+                        type == GL_UNSIGNED_INT_2_10_10_10_REV));
       break;
 
    case GL_DEPTH_COMPONENT:
@@ -2509,6 +2486,15 @@ _mesa_base_tex_format(const struct gl_context *ctx, GLint internalFormat)
       }
    }
 
+   if (ctx->Extensions.EXT_texture_sRGB_R8) {
+      switch (internalFormat) {
+      case GL_SR8_EXT:
+         return GL_RED;
+      default:
+         ; /* fallthrough */
+      }
+   }
+
    if (ctx->Version >= 30 ||
        ctx->Extensions.EXT_texture_integer) {
       switch (internalFormat) {
@@ -2777,7 +2763,7 @@ _mesa_es3_effective_internal_format_for_format_and_type(GLenum format,
 
 /**
  * Do error checking of format/type combinations for OpenGL ES 3
- * glTex[Sub]Image.
+ * glTex[Sub]Image, or ES1/ES2 with GL_OES_required_internalformat.
  * \return error code, or GL_NO_ERROR.
  */
 GLenum
@@ -2826,6 +2812,17 @@ _mesa_es3_error_check_format_and_type(const struct gl_context *ctx,
       internalFormat = effectiveInternalFormat;
    }
 
+   /* The GLES variant of EXT_texture_compression_s3tc is very vague and
+    * doesn't list valid types. Just do exactly what the spec says.
+    */
+   if (ctx->Extensions.EXT_texture_compression_s3tc &&
+       (internalFormat == GL_COMPRESSED_RGB_S3TC_DXT1_EXT ||
+        internalFormat == GL_COMPRESSED_RGBA_S3TC_DXT1_EXT ||
+        internalFormat == GL_COMPRESSED_RGBA_S3TC_DXT3_EXT ||
+        internalFormat == GL_COMPRESSED_RGBA_S3TC_DXT5_EXT))
+      return format == GL_RGB || format == GL_RGBA ? GL_NO_ERROR :
+                                                     GL_INVALID_OPERATION;
+
    switch (format) {
    case GL_BGRA_EXT:
       if (type != GL_UNSIGNED_BYTE || internalFormat != GL_BGRA)
@@ -2840,7 +2837,10 @@ _mesa_es3_error_check_format_and_type(const struct gl_context *ctx,
          case GL_RGBA8:
          case GL_RGB5_A1:
          case GL_RGBA4:
+            break;
          case GL_SRGB8_ALPHA8_EXT:
+            if (ctx->Version <= 20)
+               return GL_INVALID_OPERATION;
             break;
          default:
             return GL_INVALID_OPERATION;
@@ -2848,7 +2848,18 @@ _mesa_es3_error_check_format_and_type(const struct gl_context *ctx,
          break;
 
       case GL_BYTE:
-         if (internalFormat != GL_RGBA8_SNORM)
+         if (ctx->Version <= 20 || internalFormat != GL_RGBA8_SNORM)
+            return GL_INVALID_OPERATION;
+         break;
+
+      case GL_UNSIGNED_SHORT:
+         if (!_mesa_has_EXT_texture_norm16(ctx) || internalFormat != GL_RGBA16)
+            return GL_INVALID_OPERATION;
+         break;
+
+      case GL_SHORT:
+         if (!_mesa_has_EXT_texture_norm16(ctx) ||
+             internalFormat != GL_RGBA16_SNORM)
             return GL_INVALID_OPERATION;
          break;
 
@@ -2874,9 +2885,11 @@ _mesa_es3_error_check_format_and_type(const struct gl_context *ctx,
 
       case GL_UNSIGNED_INT_2_10_10_10_REV:
          switch (internalFormat) {
-         case GL_RGBA: /* GL_EXT_texture_type_2_10_10_10_REV */
+         case GL_RGBA:
          case GL_RGB10_A2:
          case GL_RGB5_A1:
+            if (!ctx->Extensions.EXT_texture_type_2_10_10_10_REV)
+               return GL_INVALID_OPERATION;
             break;
          default:
             return GL_INVALID_OPERATION;
@@ -2884,7 +2897,7 @@ _mesa_es3_error_check_format_and_type(const struct gl_context *ctx,
          break;
 
       case GL_HALF_FLOAT:
-         if (internalFormat != GL_RGBA16F)
+         if (ctx->Version <= 20 || internalFormat != GL_RGBA16F)
             return GL_INVALID_OPERATION;
          break;
 
@@ -2892,6 +2905,8 @@ _mesa_es3_error_check_format_and_type(const struct gl_context *ctx,
          switch (internalFormat) {
          case GL_RGBA16F:
          case GL_RGBA32F:
+            if (ctx->Version <= 20)
+               return GL_INVALID_OPERATION;
             break;
          case GL_RGBA:
             if (ctx->Extensions.OES_texture_float && internalFormat == format)
@@ -2910,6 +2925,8 @@ _mesa_es3_error_check_format_and_type(const struct gl_context *ctx,
       break;
 
    case GL_RGBA_INTEGER:
+      if (ctx->Version <= 20)
+         return GL_INVALID_OPERATION;
       switch (type) {
       case GL_UNSIGNED_BYTE:
          if (internalFormat != GL_RGBA8UI)
@@ -2958,7 +2975,10 @@ _mesa_es3_error_check_format_and_type(const struct gl_context *ctx,
          case GL_RGB:
          case GL_RGB8:
          case GL_RGB565:
+            break;
          case GL_SRGB8:
+            if (ctx->Version <= 20)
+               return GL_INVALID_OPERATION;
             break;
          default:
             return GL_INVALID_OPERATION;
@@ -2966,7 +2986,18 @@ _mesa_es3_error_check_format_and_type(const struct gl_context *ctx,
          break;
 
       case GL_BYTE:
-         if (internalFormat != GL_RGB8_SNORM)
+         if (ctx->Version <= 20 || internalFormat != GL_RGB8_SNORM)
+            return GL_INVALID_OPERATION;
+         break;
+
+      case GL_UNSIGNED_SHORT:
+         if (!_mesa_has_EXT_texture_norm16(ctx) || internalFormat != GL_RGB16)
+            return GL_INVALID_OPERATION;
+         break;
+
+      case GL_SHORT:
+         if (!_mesa_has_EXT_texture_norm16(ctx) ||
+             internalFormat != GL_RGB16_SNORM)
             return GL_INVALID_OPERATION;
          break;
 
@@ -2981,16 +3012,18 @@ _mesa_es3_error_check_format_and_type(const struct gl_context *ctx,
          break;
 
       case GL_UNSIGNED_INT_10F_11F_11F_REV:
-         if (internalFormat != GL_R11F_G11F_B10F)
+         if (ctx->Version <= 20 || internalFormat != GL_R11F_G11F_B10F)
             return GL_INVALID_OPERATION;
          break;
 
       case GL_UNSIGNED_INT_5_9_9_9_REV:
-         if (internalFormat != GL_RGB9_E5)
+         if (ctx->Version <= 20 || internalFormat != GL_RGB9_E5)
             return GL_INVALID_OPERATION;
          break;
 
       case GL_HALF_FLOAT:
+         if (ctx->Version <= 20)
+            return GL_INVALID_OPERATION;
          switch (internalFormat) {
          case GL_RGB16F:
          case GL_R11F_G11F_B10F:
@@ -3007,6 +3040,8 @@ _mesa_es3_error_check_format_and_type(const struct gl_context *ctx,
          case GL_RGB32F:
          case GL_R11F_G11F_B10F:
          case GL_RGB9_E5:
+            if (ctx->Version <= 20)
+               return GL_INVALID_OPERATION;
             break;
          case GL_RGB:
             if (ctx->Extensions.OES_texture_float && internalFormat == format)
@@ -3023,7 +3058,16 @@ _mesa_es3_error_check_format_and_type(const struct gl_context *ctx,
 
       case GL_UNSIGNED_INT_2_10_10_10_REV:
          switch (internalFormat) {
-         case GL_RGB: /* GL_EXT_texture_type_2_10_10_10_REV */
+         case GL_RGB:
+         case GL_RGB10:
+         case GL_RGB8:
+         case GL_RGB565:
+            /* GL_EXT_texture_type_2_10_10_10_REV allows GL_RGB even though
+             * GLES3 doesn't, and GL_OES_required_internalformat extends that
+             * to allow the sized RGB internalformats as well.
+             */
+            if (!ctx->Extensions.EXT_texture_type_2_10_10_10_REV)
+               return GL_INVALID_OPERATION;
             break;
          default:
             return GL_INVALID_OPERATION;
@@ -3036,6 +3080,8 @@ _mesa_es3_error_check_format_and_type(const struct gl_context *ctx,
       break;
 
    case GL_RGB_INTEGER:
+      if (ctx->Version <= 20)
+         return GL_INVALID_OPERATION;
       switch (type) {
       case GL_UNSIGNED_BYTE:
          if (internalFormat != GL_RGB8UI)
@@ -3073,6 +3119,8 @@ _mesa_es3_error_check_format_and_type(const struct gl_context *ctx,
       break;
 
    case GL_RG:
+      if (!ctx->Extensions.ARB_texture_rg)
+         return GL_INVALID_OPERATION;
       switch (type) {
       case GL_UNSIGNED_BYTE:
          if (internalFormat != GL_RG8)
@@ -3084,10 +3132,23 @@ _mesa_es3_error_check_format_and_type(const struct gl_context *ctx,
             return GL_INVALID_OPERATION;
          break;
 
+      case GL_UNSIGNED_SHORT:
+         if (!_mesa_has_EXT_texture_norm16(ctx) || internalFormat != GL_RG16)
+            return GL_INVALID_OPERATION;
+         break;
+
+      case GL_SHORT:
+         if (!_mesa_has_EXT_texture_norm16(ctx) ||
+             internalFormat != GL_RG16_SNORM)
+            return GL_INVALID_OPERATION;
+         break;
+
       case GL_HALF_FLOAT:
       case GL_HALF_FLOAT_OES:
          switch (internalFormat) {
             case GL_RG16F:
+               if (ctx->Version <= 20)
+                  return GL_INVALID_OPERATION;
                break;
             case GL_RG:
                if (ctx->Extensions.ARB_texture_rg &&
@@ -3120,6 +3181,8 @@ _mesa_es3_error_check_format_and_type(const struct gl_context *ctx,
       break;
 
    case GL_RG_INTEGER:
+      if (ctx->Version <= 20)
+         return GL_INVALID_OPERATION;
       switch (type) {
       case GL_UNSIGNED_BYTE:
          if (internalFormat != GL_RG8UI)
@@ -3157,14 +3220,29 @@ _mesa_es3_error_check_format_and_type(const struct gl_context *ctx,
       break;
 
    case GL_RED:
+      if (!ctx->Extensions.ARB_texture_rg)
+         return GL_INVALID_OPERATION;
       switch (type) {
       case GL_UNSIGNED_BYTE:
-         if (internalFormat != GL_R8)
-            return GL_INVALID_OPERATION;
-         break;
+         if (internalFormat == GL_R8 ||
+             ((internalFormat == GL_SR8_EXT) &&
+              ctx->Extensions.EXT_texture_sRGB_R8))
+            break;
+         return GL_INVALID_OPERATION;
 
       case GL_BYTE:
          if (internalFormat != GL_R8_SNORM)
+            return GL_INVALID_OPERATION;
+         break;
+
+      case GL_UNSIGNED_SHORT:
+         if (!_mesa_has_EXT_texture_norm16(ctx) || internalFormat != GL_R16)
+            return GL_INVALID_OPERATION;
+         break;
+
+      case GL_SHORT:
+         if (!_mesa_has_EXT_texture_norm16(ctx) ||
+             internalFormat != GL_R16_SNORM)
             return GL_INVALID_OPERATION;
          break;
 
@@ -3172,6 +3250,8 @@ _mesa_es3_error_check_format_and_type(const struct gl_context *ctx,
       case GL_HALF_FLOAT_OES:
          switch (internalFormat) {
          case GL_R16F:
+            if (ctx->Version <= 20)
+               return GL_INVALID_OPERATION;
             break;
          case GL_RG:
          case GL_RED:
@@ -3205,6 +3285,8 @@ _mesa_es3_error_check_format_and_type(const struct gl_context *ctx,
       break;
 
    case GL_RED_INTEGER:
+      if (ctx->Version <= 20)
+         return GL_INVALID_OPERATION;
       switch (type) {
       case GL_UNSIGNED_BYTE:
          if (internalFormat != GL_R8UI)
@@ -3261,7 +3343,7 @@ _mesa_es3_error_check_format_and_type(const struct gl_context *ctx,
          break;
 
       case GL_FLOAT:
-         if (internalFormat != GL_DEPTH_COMPONENT32F)
+         if (ctx->Version <= 20 || internalFormat != GL_DEPTH_COMPONENT32F)
             return GL_INVALID_OPERATION;
          break;
 
@@ -3279,7 +3361,7 @@ _mesa_es3_error_check_format_and_type(const struct gl_context *ctx,
          break;
 
       case GL_FLOAT_32_UNSIGNED_INT_24_8_REV:
-         if (internalFormat != GL_DEPTH32F_STENCIL8)
+         if (ctx->Version <= 20 || internalFormat != GL_DEPTH32F_STENCIL8)
             return GL_INVALID_OPERATION;
          break;
 
@@ -3301,15 +3383,27 @@ _mesa_es3_error_check_format_and_type(const struct gl_context *ctx,
    case GL_LUMINANCE_ALPHA:
       switch (type) {
       case GL_FLOAT:
-         if (ctx->Extensions.OES_texture_float && internalFormat == format)
-            break;
-      case GL_HALF_FLOAT_OES:
-         if (ctx->Extensions.OES_texture_half_float && internalFormat == format)
-            break;
-      default:
-         if (type != GL_UNSIGNED_BYTE || format != internalFormat)
+         if (!ctx->Extensions.OES_texture_float || internalFormat != format)
             return GL_INVALID_OPERATION;
+         break;
+      case GL_HALF_FLOAT_OES:
+         if (!ctx->Extensions.OES_texture_half_float || internalFormat != format)
+            return GL_INVALID_OPERATION;
+         break;
+      case GL_UNSIGNED_BYTE:
+         if (!(format == internalFormat ||
+               (format == GL_ALPHA && internalFormat == GL_ALPHA8) ||
+               (format == GL_LUMINANCE && internalFormat == GL_LUMINANCE8) ||
+               (format == GL_LUMINANCE_ALPHA &&
+                ((internalFormat == GL_LUMINANCE8_ALPHA8) ||
+                 (internalFormat == GL_LUMINANCE4_ALPHA4))))) {
+            return GL_INVALID_OPERATION;
+         }
+         break;
+      default:
+         return GL_INVALID_OPERATION;
       }
+      break;
    }
 
    return GL_NO_ERROR;
@@ -3631,12 +3725,28 @@ _mesa_format_from_format_and_type(GLenum format, GLenum type)
    unreachable("Unsupported format");
 }
 
+uint32_t
+_mesa_tex_format_from_format_and_type(const struct gl_context *ctx,
+                                      GLenum gl_format, GLenum type)
+{
+   mesa_format format = _mesa_format_from_format_and_type(gl_format, type);
+
+   if (_mesa_format_is_mesa_array_format(format))
+      format = _mesa_format_from_array_format(format);
+      
+   if (format == MESA_FORMAT_NONE || !ctx->TextureFormatSupported[format])
+      return MESA_FORMAT_NONE;
+
+   return format;
+}
+
 /**
  * Returns true if \p internal_format is a sized internal format that
  * is marked "Color Renderable" in Table 8.10 of the ES 3.2 specification.
  */
 bool
-_mesa_is_es3_color_renderable(GLenum internal_format)
+_mesa_is_es3_color_renderable(const struct gl_context *ctx,
+                              GLenum internal_format)
 {
    switch (internal_format) {
    case GL_R8:
@@ -3675,6 +3785,19 @@ _mesa_is_es3_color_renderable(GLenum internal_format)
    case GL_RGBA32I:
    case GL_RGBA32UI:
       return true;
+   case GL_R16:
+   case GL_RG16:
+   case GL_RGBA16:
+      return _mesa_has_EXT_texture_norm16(ctx);
+   case GL_R8_SNORM:
+   case GL_RG8_SNORM:
+   case GL_RGBA8_SNORM:
+      return _mesa_has_EXT_render_snorm(ctx);
+   case GL_R16_SNORM:
+   case GL_RG16_SNORM:
+   case GL_RGBA16_SNORM:
+      return _mesa_has_EXT_texture_norm16(ctx) &&
+             _mesa_has_EXT_render_snorm(ctx);
    default:
       return false;
    }
@@ -3710,6 +3833,15 @@ _mesa_is_es3_texture_filterable(const struct gl_context *ctx,
    case GL_R11F_G11F_B10F:
    case GL_RGB9_E5:
       return true;
+   case GL_R16:
+   case GL_R16_SNORM:
+   case GL_RG16:
+   case GL_RG16_SNORM:
+   case GL_RGB16:
+   case GL_RGB16_SNORM:
+   case GL_RGBA16:
+   case GL_RGBA16_SNORM:
+      return _mesa_has_EXT_texture_norm16(ctx);
    case GL_R32F:
    case GL_RG32F:
    case GL_RGB32F:

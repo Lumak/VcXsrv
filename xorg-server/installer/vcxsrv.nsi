@@ -18,14 +18,21 @@
 ;--------------------------------
  !include "FileFunc.nsh"
 
+!define NAME "VcXsrv"
+!define VERSION "1.20.1.4"
+!define UNINSTALL_PUBLISHER "${NAME}"
+!define UNINSTALL_URL "https://github.com/ArcticaProject/vcxsrv"
+
 ; The name of the installer
-Name "VcXsrv"
+Name "${NAME}"
 
 ; The file to write
-OutFile "vcxsrv.1.18.3.0.installer.exe"
+OutFile "vcxsrv.${VERSION}.installer.exe"
 
 ; The default installation directory
 InstallDir $PROGRAMFILES32\VcXsrv
+
+SetCompressor /SOLID lzma
 
 ; Registry key to check for directory (so if you install again, it will
 ; overwrite the old one automatically)
@@ -33,11 +40,11 @@ InstallDirRegKey HKLM SOFTWARE\VcXsrv "Install_Dir"
 
 LoadLanguageFile "${NSISDIR}\Contrib\Language files\English.nlf"
 
-VIProductVersion "1.18.3.0"
-VIAddVersionKey /LANG=${LANG_ENGLISH} "ProductName" "VcXsrv"
+VIProductVersion "${VERSION}"
+VIAddVersionKey /LANG=${LANG_ENGLISH} "ProductName" "${NAME}"
 VIAddVersionKey /LANG=${LANG_ENGLISH} "FileDescription" "VcXsrv windows xserver"
-VIAddVersionKey /LANG=${LANG_ENGLISH} "FileVersion" "1.18.3.0"
-VIAddVersionKey /LANG=${LANG_ENGLISH} "ProductVersion" "1.18.3.0"
+VIAddVersionKey /LANG=${LANG_ENGLISH} "FileVersion" "${VERSION}"
+VIAddVersionKey /LANG=${LANG_ENGLISH} "ProductVersion" "${VERSION}"
 
 ; Request application privileges for Windows Vista
 RequestExecutionLevel admin
@@ -65,6 +72,8 @@ XPStyle on
 ; The stuff to install
 Section "VcXsrv (required)"
 
+  SetShellVarContext All
+
   SectionIn RO
   SectionIn 1 2 3
 
@@ -82,8 +91,8 @@ Section "VcXsrv (required)"
     Delete "$INSTDIR\msvcr110.dll"
   IfFileExists "$INSTDIR\msvcp110.dll" 0 +2
     Delete "$INSTDIR\msvcp110.dll"
-  IfFileExists "$INSTDIR\msvcr120.dll" 0 +2
-    Delete "$INSTDIR\msvcr120.dll"
+  IfFileExists "$INSTDIR\msvcrt120.dll" 0 +2
+    Delete "$INSTDIR\msvcrt120.dll"
   IfFileExists "$INSTDIR\msvcp120.dll" 0 +2
     Delete "$INSTDIR\msvcp120.dll"
 
@@ -107,10 +116,11 @@ Section "VcXsrv (required)"
   File "..\..\libX11\src\XErrorDB"
   File "..\..\libX11\src\xcms\Xcms.txt"
   File "..\XtErrorDB"
+  File "..\font-dirs"
   File "..\.Xdefaults"
   File "..\hw\xwin\xlaunch\obj\release\xlaunch.exe"
   File "..\..\tools\plink\obj\release\plink.exe"
-  File "..\..\mesalib\windows\VC8\mesa\Win32\Release\swrast_dri.dll"
+  File "..\..\mesalib\src\obj\release\swrast_dri.dll"
   File "..\hw\xwin\swrastwgl_dri\obj\release\swrastwgl_dri.dll"
   File "..\..\dxtn\obj\release\dxtn.dll"
   File "..\..\libxml2\bin\libxml2-2.dll"
@@ -123,6 +133,7 @@ Section "VcXsrv (required)"
   File "..\..\libX11\obj\release\libX11.dll"
   File "..\..\libXext\src\obj\release\libXext.dll"
   File "..\..\libXmu\src\obj\release\libXmu.dll"
+  File "..\..\openssl\release32\libcrypto-1_1.dll"
   File "vcruntime140.dll"
   File "msvcp140.dll"
   SetOutPath $INSTDIR\xkbdata
@@ -136,8 +147,9 @@ Section "VcXsrv (required)"
   WriteRegStr HKLM SOFTWARE\VcXsrv "Install_Dir" "$INSTDIR"
 
   ; Write the uninstall keys for Windows
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\VcXsrv" "DisplayName" "VcXsrv"
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\VcXsrv" "DisplayVersion" "1.15.2.0"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\VcXsrv" "DisplayIcon" "$INSTDIR\vcxsrv.exe"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\VcXsrv" "DisplayName" "${NAME}"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\VcXsrv" "DisplayVersion" "${VERSION}"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\VcXsrv" "Publisher" "marha@users.sourceforge.net"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\VcXsrv" "UninstallString" '"$INSTDIR\uninstall.exe"'
   WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\VcXsrv" "NoModify" 1
@@ -180,6 +192,8 @@ SectionEnd
 Section "Fonts"
   SectionIn 1 3
 
+  SetShellVarContext All
+
   SetOutPath $INSTDIR\fonts
   CreateDirectory "$SMPROGRAMS\VcXsrv"
   File /r "..\fonts\*.*"
@@ -190,10 +204,11 @@ SectionEnd
 Section "Start Menu Shortcuts"
   SectionIn 1 3
 
+  SetShellVarContext All
+
   SetOutPath $INSTDIR
   CreateDirectory "$SMPROGRAMS\VcXsrv"
   CreateShortCut "$SMPROGRAMS\VcXsrv\Uninstall VcXsrv.lnk" "$INSTDIR\uninstall.exe" "" "$INSTDIR\uninstall.exe" 0
-  CreateShortCut "$SMPROGRAMS\VcXsrv\VcXsrv.lnk" "$INSTDIR\vcxsrv.exe" " :0 -ac -terminate -lesspointer -multiwindow -clipboard -wgl" "$INSTDIR\vcxsrv.exe" 0
   CreateShortCut "$SMPROGRAMS\VcXsrv\XLaunch.lnk" "$INSTDIR\xlaunch.exe" "" "$INSTDIR\xlaunch.exe" 0
 
 SectionEnd
@@ -202,8 +217,9 @@ SectionEnd
 Section "Desktop Shortcuts"
   SectionIn 1 3
 
+  SetShellVarContext All
+
   SetOutPath $INSTDIR
-  CreateShortCut "$DESKTOP\VcXsrv.lnk" "$INSTDIR\vcxsrv.exe" " :0 -ac -terminate -lesspointer -multiwindow -clipboard -wgl" "$INSTDIR\vcxsrv.exe" 0
   CreateShortCut "$DESKTOP\XLaunch.lnk" "$INSTDIR\xlaunch.exe" "" "$INSTDIR\xlaunch.exe" 0
 
 SectionEnd
@@ -213,6 +229,8 @@ SectionEnd
 ; Uninstaller
 
 Section "Uninstall"
+
+  SetShellVarContext All
 
   ; Remove registry keys
   DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\VcXsrv"
@@ -240,6 +258,7 @@ Section "Uninstall"
   Delete "$INSTDIR\XErrorDB"
   Delete "$INSTDIR\Xcms.txt"
   Delete "$INSTDIR\XtErrorDB"
+  Delete "$INSTDIR\font-dirs"
   Delete "$INSTDIR\.Xdefaults"
   Delete "$INSTDIR\xlaunch.exe"
   Delete "$INSTDIR\plink.exe"
@@ -258,10 +277,21 @@ Section "Uninstall"
   Delete "$INSTDIR\msvcp140.dll"
   Delete "$INSTDIR\vcruntime140d.dll"
   Delete "$INSTDIR\msvcp140d.dll"
+  Delete "$INSTDIR\libgcc_s_sjlj-1.dll"
+  Delete "$INSTDIR\libcrypto-1_1.dll"
+  Delete "$INSTDIR\libiconv-2.dll"
+  Delete "$INSTDIR\libwinpthread-1.dll"
+  Delete "$INSTDIR\libxml2-2.dll"
+  Delete "$INSTDIR\X0.hosts"
+  Delete "$INSTDIR\xauth.exe"
+  Delete "$INSTDIR\xhost.exe"
+  Delete "$INSTDIR\xrdb.exe"
+
 
   RMDir /r "$INSTDIR\fonts"
   RMDir /r "$INSTDIR\xkbdata"
   RMDir /r "$INSTDIR\locale"
+  RMDir /r "$INSTDIR\bitmaps"
 
   ; Remove shortcuts, if any
   Delete "$SMPROGRAMS\VcXsrv\*.*"

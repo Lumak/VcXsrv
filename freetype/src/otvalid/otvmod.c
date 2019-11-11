@@ -4,7 +4,7 @@
 /*                                                                         */
 /*    FreeType's OpenType validation module implementation (body).         */
 /*                                                                         */
-/*  Copyright 2004-2016 by                                                 */
+/*  Copyright 2004-2018 by                                                 */
 /*  David Turner, Robert Wilhelm, and Werner Lemberg.                      */
 /*                                                                         */
 /*  This file is part of the FreeType project, and may only be used,       */
@@ -20,7 +20,7 @@
 #include FT_TRUETYPE_TABLES_H
 #include FT_TRUETYPE_TAGS_H
 #include FT_OPENTYPE_VALIDATE_H
-#include <freetype/internal/ftobjs.h>
+#include FT_INTERNAL_OBJECTS_H
 #include FT_SERVICE_OPENTYPE_VALIDATE_H
 
 #include "otvmod.h"
@@ -271,11 +271,11 @@
     0x10000L,
     0x20000L,
 
-    0,              /* module-specific interface */
+    NULL,              /* module-specific interface */
 
-    (FT_Module_Constructor)0,
-    (FT_Module_Destructor) 0,
-    (FT_Module_Requester)  otvalid_get_service
+    (FT_Module_Constructor)NULL,                /* module_init   */
+    (FT_Module_Destructor) NULL,                /* module_done   */
+    (FT_Module_Requester)  otvalid_get_service  /* get_interface */
   };
 
 

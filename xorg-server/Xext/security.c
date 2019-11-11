@@ -195,10 +195,10 @@ SecurityDeleteAuthorization(void *value, XID id)
 
     while ((pEventClient = pAuth->eventClients)) {
         /* send revocation event event */
-        xSecurityAuthorizationRevokedEvent are;
-        are.type = SecurityEventBase + XSecurityAuthorizationRevoked;
-        are.authId = pAuth->id;
-
+        xSecurityAuthorizationRevokedEvent are = {
+            .type = SecurityEventBase + XSecurityAuthorizationRevoked,
+            .authId = pAuth->id
+        };
         WriteEventsToClient(rClient(pEventClient), 1, (xEvent *) &are);
         FreeResource(pEventClient->resource, RT_NONE);
     }
@@ -341,14 +341,16 @@ static int
 ProcSecurityQueryVersion(ClientPtr client)
 {
     /* REQUEST(xSecurityQueryVersionReq); */
-    xSecurityQueryVersionReply rep;
+    xSecurityQueryVersionReply rep = {
+        .type = X_Reply,
+        .sequenceNumber = client->sequence,
+        .length = 0,
+        .majorVersion = SERVER_SECURITY_MAJOR_VERSION,
+        .minorVersion = SERVER_SECURITY_MINOR_VERSION
+    };
 
     REQUEST_SIZE_MATCH(xSecurityQueryVersionReq);
-    rep.type = X_Reply;
-    rep.sequenceNumber = client->sequence;
-    rep.length = 0;
-    rep.majorVersion = SERVER_SECURITY_MAJOR_VERSION;
-    rep.minorVersion = SERVER_SECURITY_MINOR_VERSION;
+
     if (client->swapped) {
         swaps(&rep.sequenceNumber);
         swaps(&rep.majorVersion);
@@ -530,12 +532,13 @@ ProcSecurityGenerateAuthorization(ClientPtr client)
 
     /* tell client the auth id and data */
 
-
-    rep.type = X_Reply;
-    rep.sequenceNumber = client->sequence;
-    rep.length = bytes_to_int32(authdata_len);
-    rep.authId = authId;
-    rep.dataLength = authdata_len;
+    rep = (xSecurityGenerateAuthorizationReply) {
+        .type = X_Reply,
+        .sequenceNumber = client->sequence,
+        .length = bytes_to_int32(authdata_len),
+        .authId = authId,
+        .dataLength = authdata_len
+    };
 
     if (client->swapped) {
         swapl(&rep.length);
@@ -600,7 +603,7 @@ ProcSecurityDispatch(ClientPtr client)
     }
 }                               /* ProcSecurityDispatch */
 
-static int
+static int _X_COLD
 SProcSecurityQueryVersion(ClientPtr client)
 {
     REQUEST(xSecurityQueryVersionReq);
@@ -612,7 +615,7 @@ SProcSecurityQueryVersion(ClientPtr client)
     return ProcSecurityQueryVersion(client);
 }                               /* SProcSecurityQueryVersion */
 
-static int
+static int _X_COLD
 SProcSecurityGenerateAuthorization(ClientPtr client)
 {
     REQUEST(xSecurityGenerateAuthorizationReq);
@@ -636,7 +639,7 @@ SProcSecurityGenerateAuthorization(ClientPtr client)
     return ProcSecurityGenerateAuthorization(client);
 }                               /* SProcSecurityGenerateAuthorization */
 
-static int
+static int _X_COLD
 SProcSecurityRevokeAuthorization(ClientPtr client)
 {
     REQUEST(xSecurityRevokeAuthorizationReq);
@@ -647,7 +650,7 @@ SProcSecurityRevokeAuthorization(ClientPtr client)
     return ProcSecurityRevokeAuthorization(client);
 }                               /* SProcSecurityRevokeAuthorization */
 
-static int
+static int _X_COLD
 SProcSecurityDispatch(ClientPtr client)
 {
     REQUEST(xReq);
@@ -664,7 +667,7 @@ SProcSecurityDispatch(ClientPtr client)
     }
 }                               /* SProcSecurityDispatch */
 
-static void
+static void _X_COLD
 SwapSecurityAuthorizationRevokedEvent(xSecurityAuthorizationRevokedEvent * from,
                                       xSecurityAuthorizationRevokedEvent * to)
 {

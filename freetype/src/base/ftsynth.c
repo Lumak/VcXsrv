@@ -4,7 +4,7 @@
 /*                                                                         */
 /*    FreeType synthesizing code for emboldening and slanting (body).      */
 /*                                                                         */
-/*  Copyright 2000-2016 by                                                 */
+/*  Copyright 2000-2018 by                                                 */
 /*  David Turner, Robert Wilhelm, and Werner Lemberg.                      */
 /*                                                                         */
 /*  This file is part of the FreeType project, and may only be used,       */
@@ -17,11 +17,11 @@
 
 
 #include <ft2build.h>
-#include <ftsynth.h>
-#include <internal/ftobjs.h>
-#include <internal/ftdebug.h>
-#include <ftoutln.h>
-#include <ftbitmap.h>
+#include FT_SYNTHESIS_H
+#include FT_INTERNAL_DEBUG_H
+#include FT_INTERNAL_OBJECTS_H
+#include FT_OUTLINE_H
+#include FT_BITMAP_H
 
 
   /*************************************************************************/
@@ -123,14 +123,14 @@
 
       /*
        * XXX: overflow check for 16-bit system, for compatibility
-       *      with FT_GlyphSlot_Embolden() since freetype-2.1.10.
+       *      with FT_GlyphSlot_Embolden() since FreeType 2.1.10.
        *      unfortunately, this function return no informations
        *      about the cause of error.
        */
       if ( ( ystr >> 6 ) > FT_INT_MAX || ( ystr >> 6 ) < FT_INT_MIN )
       {
         FT_TRACE1(( "FT_GlyphSlot_Embolden:" ));
-        FT_TRACE1(( "too strong embolding parameter ystr=%d\n", ystr ));
+        FT_TRACE1(( "too strong emboldening parameter ystr=%d\n", ystr ));
         return;
       }
       error = FT_GlyphSlot_Own_Bitmap( slot );

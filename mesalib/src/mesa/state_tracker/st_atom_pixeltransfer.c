@@ -30,6 +30,7 @@
  */
 
 #include "st_context.h"
+#include "st_sampler_view.h"
 #include "st_texture.h"
 
 #include "util/u_inlines.h"
@@ -83,8 +84,8 @@ load_color_map_texture(struct gl_context *ctx, struct pipe_resource *pt)
 /**
  * Upload the pixel transfer color map texture.
  */
-static void
-update_pixel_transfer(struct st_context *st)
+void
+st_update_pixel_transfer(struct st_context *st)
 {
    struct gl_context *ctx = st->ctx;
 
@@ -99,8 +100,3 @@ update_pixel_transfer(struct st_context *st)
       load_color_map_texture(ctx, st->pixel_xfer.pixelmap_texture);
    }
 }
-
-
-const struct st_tracked_state st_update_pixel_transfer = {
-   update_pixel_transfer				/* update */
-};

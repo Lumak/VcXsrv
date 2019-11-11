@@ -5,19 +5,23 @@
  */
 
 #include "ssh.h"
+#include <assert.h>
 
 /* ----------------------------------------------------------------------
  * Core SHA256 algorithm: processes 16-word blocks into a message digest.
  */
 
-#define ror(x,y) ( ((x) << (32-y)) | (((uint32)(x)) >> (y)) )
-#define shr(x,y) ( (((uint32)(x)) >> (y)) )
+#define ror(x,y) ( ((x) << (32-y)) | (((uint32_t)(x)) >> (y)) )
+#define shr(x,y) ( (((uint32_t)(x)) >> (y)) )
 #define Ch(x,y,z) ( ((x) & (y)) ^ (~(x) & (z)) )
 #define Maj(x,y,z) ( ((x) & (y)) ^ ((x) & (z)) ^ ((y) & (z)) )
 #define bigsigma0(x) ( ror((x),2) ^ ror((x),13) ^ ror((x),22) )
 #define bigsigma1(x) ( ror((x),6) ^ ror((x),11) ^ ror((x),25) )
 #define smallsigma0(x) ( ror((x),7) ^ ror((x),18) ^ shr((x),3) )
 #define smallsigma1(x) ( ror((x),17) ^ ror((x),19) ^ shr((x),10) )
+
+static void SHA256_sw(SHA256_State *s, const unsigned char *q, int len);
+static void SHA256_ni(SHA256_State * s, const unsigned char *q, int len);
 
 void SHA256_Core_Init(SHA256_State *s) {
     s->h[0] = 0x6a09e667;
@@ -30,9 +34,9 @@ void SHA256_Core_Init(SHA256_State *s) {
     s->h[7] = 0x5be0cd19;
 }
 
-void SHA256_Block(SHA256_State *s, uint32 *block) {
-    uint32 w[80];
-    uint32 a,b,c,d,e,f,g,h;
+void SHA256_Block(SHA256_State *s, uint32_t *block) {
+    uint32_t w[80];
+    uint32_t a,b,c,d,e,f,g,h;
     static const int k[] = {
         0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5,
         0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
@@ -64,7 +68,7 @@ void SHA256_Block(SHA256_State *s, uint32 *block) {
     e = s->h[4]; f = s->h[5]; g = s->h[6]; h = s->h[7];
 
     for (t = 0; t < 64; t+=8) {
-        uint32 t1, t2;
+        uint32_t t1, t2;
 
 #define ROUND(j,a,b,c,d,e,f,g,h) \
 	t1 = h + bigsigma1(e) + Ch(e,f,g) + k[j] + w[j]; \
@@ -93,23 +97,37 @@ void SHA256_Block(SHA256_State *s, uint32 *block) {
 
 #define BLKSIZE 64
 
+static void SHA256_BinarySink_write(BinarySink *bs,
+                                    const void *p, size_t len);
+
 void SHA256_Init(SHA256_State *s) {
     SHA256_Core_Init(s);
     s->blkused = 0;
-    s->lenhi = s->lenlo = 0;
+    s->len = 0;
+    if (supports_sha_ni())
+        s->sha256 = &SHA256_ni;
+    else
+        s->sha256 = &SHA256_sw;
+    BinarySink_INIT(s, SHA256_BinarySink_write);
 }
 
-void SHA256_Bytes(SHA256_State *s, const void *p, int len) {
+static void SHA256_BinarySink_write(BinarySink *bs,
+                                    const void *p, size_t len)
+{
+    struct SHA256_State *s = BinarySink_DOWNCAST(bs, struct SHA256_State);
     unsigned char *q = (unsigned char *)p;
-    uint32 wordblock[16];
-    uint32 lenw = len;
-    int i;
 
     /*
      * Update the length field.
      */
-    s->lenlo += lenw;
-    s->lenhi += (s->lenlo < lenw);
+    s->len += len;
+
+    (*(s->sha256))(s, q, len);
+}
+
+static void SHA256_sw(SHA256_State *s, const unsigned char *q, int len) {
+    uint32_t wordblock[16];
+    int i;
 
     if (s->blkused && s->blkused+len < BLKSIZE) {
         /*
@@ -128,10 +146,10 @@ void SHA256_Bytes(SHA256_State *s, const void *p, int len) {
             /* Now process the block. Gather bytes big-endian into words */
             for (i = 0; i < 16; i++) {
                 wordblock[i] =
-                    ( ((uint32)s->block[i*4+0]) << 24 ) |
-                    ( ((uint32)s->block[i*4+1]) << 16 ) |
-                    ( ((uint32)s->block[i*4+2]) <<  8 ) |
-                    ( ((uint32)s->block[i*4+3]) <<  0 );
+                    ( ((uint32_t)s->block[i*4+0]) << 24 ) |
+                    ( ((uint32_t)s->block[i*4+1]) << 16 ) |
+                    ( ((uint32_t)s->block[i*4+2]) <<  8 ) |
+                    ( ((uint32_t)s->block[i*4+3]) <<  0 );
             }
             SHA256_Block(s, wordblock);
             s->blkused = 0;
@@ -145,30 +163,20 @@ void SHA256_Final(SHA256_State *s, unsigned char *digest) {
     int i;
     int pad;
     unsigned char c[64];
-    uint32 lenhi, lenlo;
+    uint64_t len;
 
     if (s->blkused >= 56)
         pad = 56 + 64 - s->blkused;
     else
         pad = 56 - s->blkused;
 
-    lenhi = (s->lenhi << 3) | (s->lenlo >> (32-3));
-    lenlo = (s->lenlo << 3);
+    len = (s->len << 3);
 
     memset(c, 0, pad);
     c[0] = 0x80;
-    SHA256_Bytes(s, &c, pad);
+    put_data(s, &c, pad);
 
-    c[0] = (lenhi >> 24) & 0xFF;
-    c[1] = (lenhi >> 16) & 0xFF;
-    c[2] = (lenhi >>  8) & 0xFF;
-    c[3] = (lenhi >>  0) & 0xFF;
-    c[4] = (lenlo >> 24) & 0xFF;
-    c[5] = (lenlo >> 16) & 0xFF;
-    c[6] = (lenlo >>  8) & 0xFF;
-    c[7] = (lenlo >>  0) & 0xFF;
-
-    SHA256_Bytes(s, &c, 8);
+    put_uint64(s, len);
 
     for (i = 0; i < 8; i++) {
 	digest[i*4+0] = (s->h[i] >> 24) & 0xFF;
@@ -182,7 +190,7 @@ void SHA256_Simple(const void *p, int len, unsigned char *output) {
     SHA256_State s;
 
     SHA256_Init(&s);
-    SHA256_Bytes(&s, p, len);
+    put_data(&s, p, len);
     SHA256_Final(&s, output);
     smemclr(&s, sizeof(s));
 }
@@ -191,51 +199,51 @@ void SHA256_Simple(const void *p, int len, unsigned char *output) {
  * Thin abstraction for things where hashes are pluggable.
  */
 
-static void *sha256_init(void)
-{
-    SHA256_State *s;
+struct sha256_hash {
+    SHA256_State state;
+    ssh_hash hash;
+};
 
-    s = snew(SHA256_State);
-    SHA256_Init(s);
-    return s;
+static ssh_hash *sha256_new(const struct ssh_hashalg *alg)
+{
+    struct sha256_hash *h = snew(struct sha256_hash);
+    SHA256_Init(&h->state);
+    h->hash.vt = alg;
+    BinarySink_DELEGATE_INIT(&h->hash, &h->state);
+    return &h->hash;
 }
 
-static void *sha256_copy(const void *vold)
+static ssh_hash *sha256_copy(ssh_hash *hashold)
 {
-    const SHA256_State *old = (const SHA256_State *)vold;
-    SHA256_State *s;
+    struct sha256_hash *hold, *hnew;
+    ssh_hash *hashnew = sha256_new(hashold->vt);
 
-    s = snew(SHA256_State);
-    *s = *old;
-    return s;
+    hold = container_of(hashold, struct sha256_hash, hash);
+    hnew = container_of(hashnew, struct sha256_hash, hash);
+
+    hnew->state = hold->state;
+    BinarySink_COPIED(&hnew->state);
+
+    return hashnew;
 }
 
-static void sha256_free(void *handle)
+static void sha256_free(ssh_hash *hash)
 {
-    SHA256_State *s = handle;
+    struct sha256_hash *h = container_of(hash, struct sha256_hash, hash);
 
-    smemclr(s, sizeof(*s));
-    sfree(s);
+    smemclr(h, sizeof(*h));
+    sfree(h);
 }
 
-static void sha256_bytes(void *handle, const void *p, int len)
+static void sha256_final(ssh_hash *hash, unsigned char *output)
 {
-    SHA256_State *s = handle;
-
-    SHA256_Bytes(s, p, len);
+    struct sha256_hash *h = container_of(hash, struct sha256_hash, hash);
+    SHA256_Final(&h->state, output);
+    sha256_free(hash);
 }
 
-static void sha256_final(void *handle, unsigned char *output)
-{
-    SHA256_State *s = handle;
-
-    SHA256_Final(s, output);
-    sha256_free(s);
-}
-
-const struct ssh_hash ssh_sha256 = {
-    sha256_init, sha256_copy, sha256_bytes, sha256_final, sha256_free,
-    32, "SHA-256"
+const struct ssh_hashalg ssh_sha256 = {
+    sha256_new, sha256_copy, sha256_final, sha256_free, 32, "SHA-256"
 };
 
 /* ----------------------------------------------------------------------
@@ -243,107 +251,80 @@ const struct ssh_hash ssh_sha256 = {
  * HMAC wrapper on it.
  */
 
-static void *sha256_make_context(void *cipher_ctx)
+struct hmacsha256 {
+    SHA256_State sha[3];
+    ssh2_mac mac;
+};
+
+static ssh2_mac *hmacsha256_new(
+    const struct ssh2_macalg *alg, ssh2_cipher *cipher)
 {
-    return snewn(3, SHA256_State);
+    struct hmacsha256 *ctx = snew(struct hmacsha256);
+    ctx->mac.vt = alg;
+    BinarySink_DELEGATE_INIT(&ctx->mac, &ctx->sha[2]);
+    return &ctx->mac;
 }
 
-static void sha256_free_context(void *handle)
+static void hmacsha256_free(ssh2_mac *mac)
 {
-    smemclr(handle, 3 * sizeof(SHA256_State));
-    sfree(handle);
+    struct hmacsha256 *ctx = container_of(mac, struct hmacsha256, mac);
+    smemclr(ctx, sizeof(*ctx));
+    sfree(ctx);
 }
 
-static void sha256_key_internal(void *handle, unsigned char *key, int len)
+static void sha256_key_internal(struct hmacsha256 *ctx,
+                                const unsigned char *key, int len)
 {
-    SHA256_State *keys = (SHA256_State *)handle;
     unsigned char foo[64];
     int i;
 
     memset(foo, 0x36, 64);
     for (i = 0; i < len && i < 64; i++)
 	foo[i] ^= key[i];
-    SHA256_Init(&keys[0]);
-    SHA256_Bytes(&keys[0], foo, 64);
+    SHA256_Init(&ctx->sha[0]);
+    put_data(&ctx->sha[0], foo, 64);
 
     memset(foo, 0x5C, 64);
     for (i = 0; i < len && i < 64; i++)
 	foo[i] ^= key[i];
-    SHA256_Init(&keys[1]);
-    SHA256_Bytes(&keys[1], foo, 64);
+    SHA256_Init(&ctx->sha[1]);
+    put_data(&ctx->sha[1], foo, 64);
 
     smemclr(foo, 64);		       /* burn the evidence */
 }
 
-static void sha256_key(void *handle, unsigned char *key)
+static void hmacsha256_key(ssh2_mac *mac, const void *key)
 {
-    sha256_key_internal(handle, key, 32);
+    struct hmacsha256 *ctx = container_of(mac, struct hmacsha256, mac);
+    sha256_key_internal(ctx, key, ctx->mac.vt->keylen);
 }
 
-static void hmacsha256_start(void *handle)
+static void hmacsha256_start(ssh2_mac *mac)
 {
-    SHA256_State *keys = (SHA256_State *)handle;
+    struct hmacsha256 *ctx = container_of(mac, struct hmacsha256, mac);
 
-    keys[2] = keys[0];		      /* structure copy */
+    ctx->sha[2] = ctx->sha[0];         /* structure copy */
+    BinarySink_COPIED(&ctx->sha[2]);
 }
 
-static void hmacsha256_bytes(void *handle, unsigned char const *blk, int len)
+static void hmacsha256_genresult(ssh2_mac *mac, unsigned char *hmac)
 {
-    SHA256_State *keys = (SHA256_State *)handle;
-    SHA256_Bytes(&keys[2], (void *)blk, len);
-}
-
-static void hmacsha256_genresult(void *handle, unsigned char *hmac)
-{
-    SHA256_State *keys = (SHA256_State *)handle;
+    struct hmacsha256 *ctx = container_of(mac, struct hmacsha256, mac);
     SHA256_State s;
     unsigned char intermediate[32];
 
-    s = keys[2];		       /* structure copy */
+    s = ctx->sha[2];                   /* structure copy */
+    BinarySink_COPIED(&s);
     SHA256_Final(&s, intermediate);
-    s = keys[1];		       /* structure copy */
-    SHA256_Bytes(&s, intermediate, 32);
+    s = ctx->sha[1];                   /* structure copy */
+    BinarySink_COPIED(&s);
+    put_data(&s, intermediate, 32);
     SHA256_Final(&s, hmac);
 }
 
-static void sha256_do_hmac(void *handle, unsigned char *blk, int len,
-			 unsigned long seq, unsigned char *hmac)
-{
-    unsigned char seqbuf[4];
-
-    PUT_32BIT_MSB_FIRST(seqbuf, seq);
-    hmacsha256_start(handle);
-    hmacsha256_bytes(handle, seqbuf, 4);
-    hmacsha256_bytes(handle, blk, len);
-    hmacsha256_genresult(handle, hmac);
-}
-
-static void sha256_generate(void *handle, unsigned char *blk, int len,
-			  unsigned long seq)
-{
-    sha256_do_hmac(handle, blk, len, seq, blk + len);
-}
-
-static int hmacsha256_verresult(void *handle, unsigned char const *hmac)
-{
-    unsigned char correct[32];
-    hmacsha256_genresult(handle, correct);
-    return smemeq(correct, hmac, 32);
-}
-
-static int sha256_verify(void *handle, unsigned char *blk, int len,
-		       unsigned long seq)
-{
-    unsigned char correct[32];
-    sha256_do_hmac(handle, blk, len, seq, correct);
-    return smemeq(correct, blk + len, 32);
-}
-
-const struct ssh_mac ssh_hmac_sha256 = {
-    sha256_make_context, sha256_free_context, sha256_key,
-    sha256_generate, sha256_verify,
-    hmacsha256_start, hmacsha256_bytes,
-    hmacsha256_genresult, hmacsha256_verresult,
+const struct ssh2_macalg ssh_hmac_sha256 = {
+    hmacsha256_new, hmacsha256_free, hmacsha256_key,
+    hmacsha256_start, hmacsha256_genresult,
     "hmac-sha2-256", "hmac-sha2-256-etm@openssh.com",
     32, 32,
     "HMAC-SHA-256"
@@ -398,3 +379,260 @@ int main(void) {
 }
 
 #endif
+
+#ifdef COMPILER_SUPPORTS_SHA_NI
+
+#if defined _MSC_VER && defined _M_AMD64
+# include <intrin.h>
+#endif
+
+/*
+ * Set target architecture for Clang and GCC
+ */
+#if !defined(__clang__) && defined(__GNUC__)
+#    pragma GCC target("sha")
+#    pragma GCC target("sse4.1")
+#endif
+
+#if defined(__clang__) || (defined(__GNUC__) && (__GNUC__ >= 5))
+#    define FUNC_ISA __attribute__ ((target("sse4.1,sha")))
+#else
+#    define FUNC_ISA
+#endif
+
+#include <wmmintrin.h>
+#include <smmintrin.h>
+#include <immintrin.h>
+
+#if defined(__clang__) || defined(__GNUC__)
+#include <shaintrin.h>
+#endif
+
+/* SHA256 implementation using new instructions
+   The code is based on Jeffrey Walton's SHA256 implementation:
+   https://github.com/noloader/SHA-Intrinsics
+*/
+FUNC_ISA
+static void SHA256_ni_(SHA256_State * s, const unsigned char *q, int len) {
+    if (s->blkused && s->blkused+len < BLKSIZE) {
+        /*
+         * Trivial case: just add to the block.
+         */
+        memcpy(s->block + s->blkused, q, len);
+        s->blkused += len;
+    } else {
+        __m128i STATE0, STATE1;
+        __m128i MSG, TMP;
+        __m128i MSG0, MSG1, MSG2, MSG3;
+        __m128i ABEF_SAVE, CDGH_SAVE;
+        const __m128i MASK = _mm_set_epi64x(0x0c0d0e0f08090a0bULL, 0x0405060700010203ULL);
+
+        /* Load initial values */
+        TMP = _mm_loadu_si128((const __m128i*) &s->h[0]);
+        STATE1 = _mm_loadu_si128((const __m128i*) &s->h[4]);
+
+        TMP = _mm_shuffle_epi32(TMP, 0xB1);          /* CDAB */
+        STATE1 = _mm_shuffle_epi32(STATE1, 0x1B);    /* EFGH */
+        STATE0 = _mm_alignr_epi8(TMP, STATE1, 8);    /* ABEF */
+        STATE1 = _mm_blend_epi16(STATE1, TMP, 0xF0); /* CDGH */
+        /*
+         * We must complete and process at least one block.
+         */
+        while (s->blkused + len >= BLKSIZE) {
+            memcpy(s->block + s->blkused, q, BLKSIZE - s->blkused);
+            q += BLKSIZE - s->blkused;
+            len -= BLKSIZE - s->blkused;
+
+                /* Save current state */
+            ABEF_SAVE = STATE0;
+            CDGH_SAVE = STATE1;
+
+            /* Rounds 0-3 */
+            MSG = _mm_loadu_si128((const __m128i*) (s->block + 0));
+            MSG0 = _mm_shuffle_epi8(MSG, MASK);
+            MSG = _mm_add_epi32(MSG0, _mm_set_epi64x(0xE9B5DBA5B5C0FBCFULL, 0x71374491428A2F98ULL));
+            STATE1 = _mm_sha256rnds2_epu32(STATE1, STATE0, MSG);
+            MSG = _mm_shuffle_epi32(MSG, 0x0E);
+            STATE0 = _mm_sha256rnds2_epu32(STATE0, STATE1, MSG);
+
+            /* Rounds 4-7 */
+            MSG1 = _mm_loadu_si128((const __m128i*) (s->block + 16));
+            MSG1 = _mm_shuffle_epi8(MSG1, MASK);
+            MSG = _mm_add_epi32(MSG1, _mm_set_epi64x(0xAB1C5ED5923F82A4ULL, 0x59F111F13956C25BULL));
+            STATE1 = _mm_sha256rnds2_epu32(STATE1, STATE0, MSG);
+            MSG = _mm_shuffle_epi32(MSG, 0x0E);
+            STATE0 = _mm_sha256rnds2_epu32(STATE0, STATE1, MSG);
+            MSG0 = _mm_sha256msg1_epu32(MSG0, MSG1);
+
+            /* Rounds 8-11 */
+            MSG2 = _mm_loadu_si128((const __m128i*) (s->block + 32));
+            MSG2 = _mm_shuffle_epi8(MSG2, MASK);
+            MSG = _mm_add_epi32(MSG2, _mm_set_epi64x(0x550C7DC3243185BEULL, 0x12835B01D807AA98ULL));
+            STATE1 = _mm_sha256rnds2_epu32(STATE1, STATE0, MSG);
+            MSG = _mm_shuffle_epi32(MSG, 0x0E);
+            STATE0 = _mm_sha256rnds2_epu32(STATE0, STATE1, MSG);
+            MSG1 = _mm_sha256msg1_epu32(MSG1, MSG2);
+
+            /* Rounds 12-15 */
+            MSG3 = _mm_loadu_si128((const __m128i*) (s->block + 48));
+            MSG3 = _mm_shuffle_epi8(MSG3, MASK);
+            MSG = _mm_add_epi32(MSG3, _mm_set_epi64x(0xC19BF1749BDC06A7ULL, 0x80DEB1FE72BE5D74ULL));
+            STATE1 = _mm_sha256rnds2_epu32(STATE1, STATE0, MSG);
+            TMP = _mm_alignr_epi8(MSG3, MSG2, 4);
+            MSG0 = _mm_add_epi32(MSG0, TMP);
+            MSG0 = _mm_sha256msg2_epu32(MSG0, MSG3);
+            MSG = _mm_shuffle_epi32(MSG, 0x0E);
+            STATE0 = _mm_sha256rnds2_epu32(STATE0, STATE1, MSG);
+            MSG2 = _mm_sha256msg1_epu32(MSG2, MSG3);
+
+            /* Rounds 16-19 */
+            MSG = _mm_add_epi32(MSG0, _mm_set_epi64x(0x240CA1CC0FC19DC6ULL, 0xEFBE4786E49B69C1ULL));
+            STATE1 = _mm_sha256rnds2_epu32(STATE1, STATE0, MSG);
+            TMP = _mm_alignr_epi8(MSG0, MSG3, 4);
+            MSG1 = _mm_add_epi32(MSG1, TMP);
+            MSG1 = _mm_sha256msg2_epu32(MSG1, MSG0);
+            MSG = _mm_shuffle_epi32(MSG, 0x0E);
+            STATE0 = _mm_sha256rnds2_epu32(STATE0, STATE1, MSG);
+            MSG3 = _mm_sha256msg1_epu32(MSG3, MSG0);
+
+            /* Rounds 20-23 */
+            MSG = _mm_add_epi32(MSG1, _mm_set_epi64x(0x76F988DA5CB0A9DCULL, 0x4A7484AA2DE92C6FULL));
+            STATE1 = _mm_sha256rnds2_epu32(STATE1, STATE0, MSG);
+            TMP = _mm_alignr_epi8(MSG1, MSG0, 4);
+            MSG2 = _mm_add_epi32(MSG2, TMP);
+            MSG2 = _mm_sha256msg2_epu32(MSG2, MSG1);
+            MSG = _mm_shuffle_epi32(MSG, 0x0E);
+            STATE0 = _mm_sha256rnds2_epu32(STATE0, STATE1, MSG);
+            MSG0 = _mm_sha256msg1_epu32(MSG0, MSG1);
+
+            /* Rounds 24-27 */
+            MSG = _mm_add_epi32(MSG2, _mm_set_epi64x(0xBF597FC7B00327C8ULL, 0xA831C66D983E5152ULL));
+            STATE1 = _mm_sha256rnds2_epu32(STATE1, STATE0, MSG);
+            TMP = _mm_alignr_epi8(MSG2, MSG1, 4);
+            MSG3 = _mm_add_epi32(MSG3, TMP);
+            MSG3 = _mm_sha256msg2_epu32(MSG3, MSG2);
+            MSG = _mm_shuffle_epi32(MSG, 0x0E);
+            STATE0 = _mm_sha256rnds2_epu32(STATE0, STATE1, MSG);
+            MSG1 = _mm_sha256msg1_epu32(MSG1, MSG2);
+
+            /* Rounds 28-31 */
+            MSG = _mm_add_epi32(MSG3, _mm_set_epi64x(0x1429296706CA6351ULL,  0xD5A79147C6E00BF3ULL));
+            STATE1 = _mm_sha256rnds2_epu32(STATE1, STATE0, MSG);
+            TMP = _mm_alignr_epi8(MSG3, MSG2, 4);
+            MSG0 = _mm_add_epi32(MSG0, TMP);
+            MSG0 = _mm_sha256msg2_epu32(MSG0, MSG3);
+            MSG = _mm_shuffle_epi32(MSG, 0x0E);
+            STATE0 = _mm_sha256rnds2_epu32(STATE0, STATE1, MSG);
+            MSG2 = _mm_sha256msg1_epu32(MSG2, MSG3);
+
+            /* Rounds 32-35 */
+            MSG = _mm_add_epi32(MSG0, _mm_set_epi64x(0x53380D134D2C6DFCULL, 0x2E1B213827B70A85ULL));
+            STATE1 = _mm_sha256rnds2_epu32(STATE1, STATE0, MSG);
+            TMP = _mm_alignr_epi8(MSG0, MSG3, 4);
+            MSG1 = _mm_add_epi32(MSG1, TMP);
+            MSG1 = _mm_sha256msg2_epu32(MSG1, MSG0);
+            MSG = _mm_shuffle_epi32(MSG, 0x0E);
+            STATE0 = _mm_sha256rnds2_epu32(STATE0, STATE1, MSG);
+            MSG3 = _mm_sha256msg1_epu32(MSG3, MSG0);
+
+            /* Rounds 36-39 */
+            MSG = _mm_add_epi32(MSG1, _mm_set_epi64x(0x92722C8581C2C92EULL, 0x766A0ABB650A7354ULL));
+            STATE1 = _mm_sha256rnds2_epu32(STATE1, STATE0, MSG);
+            TMP = _mm_alignr_epi8(MSG1, MSG0, 4);
+            MSG2 = _mm_add_epi32(MSG2, TMP);
+            MSG2 = _mm_sha256msg2_epu32(MSG2, MSG1);
+            MSG = _mm_shuffle_epi32(MSG, 0x0E);
+            STATE0 = _mm_sha256rnds2_epu32(STATE0, STATE1, MSG);
+            MSG0 = _mm_sha256msg1_epu32(MSG0, MSG1);
+
+            /* Rounds 40-43 */
+            MSG = _mm_add_epi32(MSG2, _mm_set_epi64x(0xC76C51A3C24B8B70ULL, 0xA81A664BA2BFE8A1ULL));
+            STATE1 = _mm_sha256rnds2_epu32(STATE1, STATE0, MSG);
+            TMP = _mm_alignr_epi8(MSG2, MSG1, 4);
+            MSG3 = _mm_add_epi32(MSG3, TMP);
+            MSG3 = _mm_sha256msg2_epu32(MSG3, MSG2);
+            MSG = _mm_shuffle_epi32(MSG, 0x0E);
+            STATE0 = _mm_sha256rnds2_epu32(STATE0, STATE1, MSG);
+            MSG1 = _mm_sha256msg1_epu32(MSG1, MSG2);
+
+            /* Rounds 44-47 */
+            MSG = _mm_add_epi32(MSG3, _mm_set_epi64x(0x106AA070F40E3585ULL, 0xD6990624D192E819ULL));
+            STATE1 = _mm_sha256rnds2_epu32(STATE1, STATE0, MSG);
+            TMP = _mm_alignr_epi8(MSG3, MSG2, 4);
+            MSG0 = _mm_add_epi32(MSG0, TMP);
+            MSG0 = _mm_sha256msg2_epu32(MSG0, MSG3);
+            MSG = _mm_shuffle_epi32(MSG, 0x0E);
+            STATE0 = _mm_sha256rnds2_epu32(STATE0, STATE1, MSG);
+            MSG2 = _mm_sha256msg1_epu32(MSG2, MSG3);
+
+            /* Rounds 48-51 */
+            MSG = _mm_add_epi32(MSG0, _mm_set_epi64x(0x34B0BCB52748774CULL, 0x1E376C0819A4C116ULL));
+            STATE1 = _mm_sha256rnds2_epu32(STATE1, STATE0, MSG);
+            TMP = _mm_alignr_epi8(MSG0, MSG3, 4);
+            MSG1 = _mm_add_epi32(MSG1, TMP);
+            MSG1 = _mm_sha256msg2_epu32(MSG1, MSG0);
+            MSG = _mm_shuffle_epi32(MSG, 0x0E);
+            STATE0 = _mm_sha256rnds2_epu32(STATE0, STATE1, MSG);
+            MSG3 = _mm_sha256msg1_epu32(MSG3, MSG0);
+
+            /* Rounds 52-55 */
+            MSG = _mm_add_epi32(MSG1, _mm_set_epi64x(0x682E6FF35B9CCA4FULL, 0x4ED8AA4A391C0CB3ULL));
+            STATE1 = _mm_sha256rnds2_epu32(STATE1, STATE0, MSG);
+            TMP = _mm_alignr_epi8(MSG1, MSG0, 4);
+            MSG2 = _mm_add_epi32(MSG2, TMP);
+            MSG2 = _mm_sha256msg2_epu32(MSG2, MSG1);
+            MSG = _mm_shuffle_epi32(MSG, 0x0E);
+            STATE0 = _mm_sha256rnds2_epu32(STATE0, STATE1, MSG);
+
+            /* Rounds 56-59 */
+            MSG = _mm_add_epi32(MSG2, _mm_set_epi64x(0x8CC7020884C87814ULL, 0x78A5636F748F82EEULL));
+            STATE1 = _mm_sha256rnds2_epu32(STATE1, STATE0, MSG);
+            TMP = _mm_alignr_epi8(MSG2, MSG1, 4);
+            MSG3 = _mm_add_epi32(MSG3, TMP);
+            MSG3 = _mm_sha256msg2_epu32(MSG3, MSG2);
+            MSG = _mm_shuffle_epi32(MSG, 0x0E);
+            STATE0 = _mm_sha256rnds2_epu32(STATE0, STATE1, MSG);
+
+            /* Rounds 60-63 */
+            MSG = _mm_add_epi32(MSG3, _mm_set_epi64x(0xC67178F2BEF9A3F7ULL, 0xA4506CEB90BEFFFAULL));
+            STATE1 = _mm_sha256rnds2_epu32(STATE1, STATE0, MSG);
+            MSG = _mm_shuffle_epi32(MSG, 0x0E);
+            STATE0 = _mm_sha256rnds2_epu32(STATE0, STATE1, MSG);
+
+            /* Combine state  */
+            STATE0 = _mm_add_epi32(STATE0, ABEF_SAVE);
+            STATE1 = _mm_add_epi32(STATE1, CDGH_SAVE);
+
+            s->blkused = 0;
+        }
+
+        TMP = _mm_shuffle_epi32(STATE0, 0x1B);       /* FEBA */
+        STATE1 = _mm_shuffle_epi32(STATE1, 0xB1);    /* DCHG */
+        STATE0 = _mm_blend_epi16(TMP, STATE1, 0xF0); /* DCBA */
+        STATE1 = _mm_alignr_epi8(STATE1, TMP, 8);    /* ABEF */
+
+        /* Save state */
+        _mm_storeu_si128((__m128i*) &s->h[0], STATE0);
+        _mm_storeu_si128((__m128i*) &s->h[4], STATE1);
+
+        memcpy(s->block, q, len);
+        s->blkused = len;
+    }
+}
+
+/*
+ * Workaround LLVM bug https://bugs.llvm.org/show_bug.cgi?id=34980
+ */
+static void SHA256_ni(SHA256_State * s, const unsigned char *q, int len)
+{
+    SHA256_ni_(s, q, len);
+}
+
+#else /* COMPILER_SUPPORTS_AES_NI */
+
+static void SHA256_ni(SHA256_State * s, const unsigned char *q, int len)
+{
+    assert(0);
+}
+
+#endif  /* COMPILER_SUPPORTS_AES_NI */

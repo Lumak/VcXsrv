@@ -9,17 +9,24 @@
 #define WINCAPI_GLOBAL
 #include "wincapi.h"
 
-int got_crypt(void)
+bool got_crypt(void)
 {
-    static int attempted = FALSE;
-    static int successful;
+    static bool attempted = false;
+    static bool successful;
     static HMODULE crypt;
 
     if (!attempted) {
-        attempted = TRUE;
+        attempted = true;
         crypt = load_system32_dll("crypt32.dll");
         successful = crypt &&
-            GET_WINDOWS_FUNCTION(crypt, CryptProtectMemory);
+#ifdef COVERITY
+            /* The build toolchain I use with Coverity doesn't know
+             * about this function, so can't type-check it */
+            GET_WINDOWS_FUNCTION_NO_TYPECHECK(crypt, CryptProtectMemory)
+#else
+            GET_WINDOWS_FUNCTION(crypt, CryptProtectMemory)
+#endif
+            ;
     }
     return successful;
 }

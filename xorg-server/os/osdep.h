@@ -55,14 +55,7 @@ SOFTWARE.
 #include <X11/Xdmcp.h>
 #endif
 
-#ifdef _POSIX_SOURCE
 #include <limits.h>
-#else
-#define _POSIX_SOURCE
-#include <limits.h>
-#undef _POSIX_SOURCE
-#endif
-
 #include <stddef.h>
 #include <X11/Xos.h>
 
@@ -113,9 +106,6 @@ typedef int (*AuthRemCFunc) (AuthRemCArgs);
 #define AuthRstCArgs void
 typedef int (*AuthRstCFunc) (AuthRstCArgs);
 
-#define AuthToIDArgs unsigned short data_length, char *data
-typedef XID (*AuthToIDFunc) (AuthToIDArgs);
-
 typedef void (*OsCloseFunc) (ClientPtr);
 
 typedef int (*OsFlushFunc) (ClientPtr who, struct _osComm * oc, char *extraBuf,
@@ -143,6 +133,9 @@ extern int FlushClient(ClientPtr /*who */ ,
 extern void FreeOsBuffers(OsCommPtr     /*oc */
     );
 
+void
+CloseDownFileDescriptor(OsCommPtr oc);
+
 #include "dix.h"
 #include "ospoll.h"
 
@@ -151,30 +144,9 @@ extern struct ospoll    *server_poll;
 Bool
 listen_to_client(ClientPtr client);
 
-#if !defined(WIN32) || defined(__CYGWIN__)
-extern int *ConnectionTranslation;
-extern int ConnectionTranslationSize;
-static inline int GetConnectionTranslation(int conn) {
-    if (conn >= ConnectionTranslationSize)
-        return 0;
-    return ConnectionTranslation[conn];
-}
-#else
-extern int GetConnectionTranslation(int conn);
-extern void SetConnectionTranslation(int conn, int client);
-extern void ClearConnectionTranslation(void);
-#endif
-
 extern Bool NewOutputPending;
 
 extern WorkQueuePtr workQueue;
-
-/* in WaitFor.c */
-#if defined(WIN32) && !defined(__CYGWIN__)
-typedef long int fd_mask;
-#endif
-#define ffs mffs
-extern int mffs(fd_mask);
 
 /* in access.c */
 extern Bool ComputeLocalClient(ClientPtr client);
@@ -185,7 +157,6 @@ extern void GenerateRandomData(int len, char *buf);
 /* in mitauth.c */
 extern XID MitCheckCookie(AuthCheckArgs);
 extern XID MitGenerateCookie(AuthGenCArgs);
-extern XID MitToID(AuthToIDArgs);
 extern int MitAddCookie(AuthAddCArgs);
 extern int MitFromID(AuthFromIDArgs);
 extern int MitRemoveCookie(AuthRemCArgs);
@@ -194,7 +165,6 @@ extern int MitResetCookie(AuthRstCArgs);
 /* in xdmauth.c */
 #ifdef HASXDMAUTH
 extern XID XdmCheckCookie(AuthCheckArgs);
-extern XID XdmToID(AuthToIDArgs);
 extern int XdmAddCookie(AuthAddCArgs);
 extern int XdmFromID(AuthFromIDArgs);
 extern int XdmRemoveCookie(AuthRemCArgs);
@@ -205,7 +175,6 @@ extern int XdmResetCookie(AuthRstCArgs);
 #ifdef SECURE_RPC
 extern void SecureRPCInit(AuthInitArgs);
 extern XID SecureRPCCheck(AuthCheckArgs);
-extern XID SecureRPCToID(AuthToIDArgs);
 extern int SecureRPCAdd(AuthAddCArgs);
 extern int SecureRPCFromID(AuthFromIDArgs);
 extern int SecureRPCRemove(AuthRemCArgs);

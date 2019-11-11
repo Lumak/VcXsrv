@@ -199,7 +199,7 @@ UpdateCurrentTime(void)
     systime.milliseconds = GetTimeInMillis();
     if (systime.milliseconds < currentTime.milliseconds)
         systime.months++;
-    if (*checkForInput[0] != *checkForInput[1])
+    if (InputCheckPending())
         ProcessInputEvents();
     if (CompareTimeStamps(systime, currentTime) == LATER)
         currentTime = systime;
@@ -226,8 +226,7 @@ UpdateCurrentTimeIf(void)
 #define SMART_SCHEDULE_MAX_SLICE	15
 
 #ifdef HAVE_SETITIMER
-#define SMART_SCHEDULE_DEFAULT_SIGNAL_ENABLE HAVE_SETITIMER
-Bool SmartScheduleSignalEnable = SMART_SCHEDULE_DEFAULT_SIGNAL_ENABLE;
+Bool SmartScheduleSignalEnable = TRUE;
 #endif
 
 long SmartScheduleSlice = SMART_SCHEDULE_DEFAULT_INTERVAL;
@@ -268,6 +267,16 @@ mark_client_ready(ClientPtr client)
 {
     if (xorg_list_is_empty(&client->ready))
         xorg_list_append(&client->ready, &ready_clients);
+}
+
+/*
+ * Client has requests queued or data on the network, but awaits a
+ * server grab release
+ */
+void mark_client_saved_ready(ClientPtr client)
+{
+    if (xorg_list_is_empty(&client->ready))
+        xorg_list_append(&client->ready, &saved_ready_clients);
 }
 
 /* Client has no requests queued and no data on network */
@@ -366,7 +375,7 @@ SmartScheduleClient(void)
          * has run, bump the slice up to get maximal
          * performance from a single client
          */
-        if ((now - pClient->smart_start_tick) > 1000 &&
+        if ((now - best->smart_start_tick) > 1000 &&
             SmartScheduleSlice < SmartScheduleMaxSlice) {
             SmartScheduleSlice += SmartScheduleInterval;
         }
@@ -394,45 +403,70 @@ DisableLimitedSchedulingLatency(void)
         SmartScheduleLatencyLimited = 0;
 }
 
-void
-Dispatch(void)
+Bool isThereSomething(Bool are_ready);
+
+void DispatchQueuedEvents(Bool wait)
 {
-    int result;
-    ClientPtr client;
-    HWEventQueuePtr *icheck = checkForInput;
-    long start_tick;
-
-    nextFreeClientID = 1;
-    nClients = 0;
-
-    SmartScheduleSlice = SmartScheduleInterval;
-    init_client_ready();
-
-    while (!dispatchException) {
-        if (*icheck[0] != *icheck[1]) {
+    static int reentrantcheck;
+    static int maxDoCount;
+    if (!wait)
+    {
+        if (reentrantcheck)
+        {
+            maxDoCount = -1;
+            return;
+        }
+        reentrantcheck=1;
+        maxDoCount = 10;
+    }
+    while (1)
+    {
+        if (InputCheckPending())
+        {
             ProcessInputEvents();
             FlushIfCriticalOutputPending();
         }
 
-        if (!WaitForSomething(clients_are_ready()))
-            continue;
+        if (wait)
+        {
+            if (!WaitForSomething(clients_are_ready()))
+                return;
+        }
+        else
+        {
+            if (!isThereSomething(clients_are_ready()))
+            {
+                reentrantcheck=0;
+                return;
+            }
+            else if (maxDoCount-- < 0)
+            {
+                reentrantcheck=0;
+                return;
+            }
+        }
 
        /*****************
 	*  Handle events in round robin fashion, doing input between
 	*  each round
 	*****************/
 
-        if (!dispatchException && clients_are_ready()) {
+        if (!dispatchException && clients_are_ready())
+        {
+            long start_tick;
+            ClientPtr client;
             client = SmartScheduleClient();
 
             isItTimeToYield = FALSE;
 
             start_tick = SmartScheduleTime;
-            while (!isItTimeToYield) {
+            while (!isItTimeToYield)
+            {
+                int result;
 #ifdef XSERVER_DTRACE
                 CARD8 StartMajorOp;
 #endif
-                if (*icheck[0] != *icheck[1])
+                if (InputCheckPending())
                     ProcessInputEvents();
 
                 FlushIfCriticalOutputPending();
@@ -446,7 +480,8 @@ Dispatch(void)
 
                 /* now, finally, deal with client requests */
                 result = ReadRequestFromClient(client);
-                if (result <= 0) {
+                if (result <= 0)
+                {
                     if (result < 0)
                         CloseDownClient(client);
                     break;
@@ -455,7 +490,8 @@ Dispatch(void)
                 client->sequence++;
                 client->majorOp = ((xReq *) client->requestBuffer)->reqType;
                 client->minorOp = 0;
-                if (client->majorOp >= EXTENSION_BASE) {
+                if (client->majorOp >= EXTENSION_BASE)
+                {
                     ExtensionEntry *ext = GetExtensionEntry(client->majorOp);
 
                     if (ext)
@@ -474,11 +510,11 @@ Dispatch(void)
 #endif
                 if (result > (maxBigRequestSize << 2))
                     result = BadLength;
-                else {
+                else
+                {
                     result = XaceHookDispatch(client, client->majorOp);
                     if (result == Success)
-                        result =
-                            (*client->requestVector[client->majorOp]) (client);
+                        result = (*client->requestVector[client->majorOp]) (client);
                 }
                 if (!SmartScheduleSignalEnable)
                     SmartScheduleTime = GetTimeInMillis();
@@ -486,42 +522,36 @@ Dispatch(void)
 #ifdef XSERVER_DTRACE
                 if (XSERVER_REQUEST_DONE_ENABLED())
                 {
-                  if (result!=Success)
-                  {
-                    char Message[255];
-                    sprintf(Message,"ERROR: %s (0x%x)",LookupMajorName(client->majorOp),client->errorValue);
-                    XSERVER_REQUEST_DONE(Message,
-                                         client->majorOp, client->sequence,
-                                         client->index, result);
-                  }
-                  else
-                  {
-                    if (StartMajorOp!=client->majorOp)
+                    if (result!=Success)
                     {
-                      char Message[255];
-                      sprintf(Message,"Changed request: %s -> %s",LookupMajorName(StartMajorOp),LookupMajorName(client->majorOp));
-                      XSERVER_REQUEST_DONE(Message,
-                                           client->majorOp, client->sequence,
-                                           client->index, result);
+                        char Message[255];
+                        sprintf(Message,"ERROR: %s (0x%x)",LookupMajorName(client->majorOp),client->errorValue);
+                        XSERVER_REQUEST_DONE(Message, client->majorOp, client->sequence, client->index, result);
                     }
                     else
                     {
-                      XSERVER_REQUEST_DONE(LookupMajorName(client->majorOp),
-                                           client->majorOp, client->sequence,
-                                           client->index, result);
+                        if (StartMajorOp!=client->majorOp)
+                        {
+                            char Message[255];
+                            sprintf(Message,"Changed request: %s -> %s",LookupMajorName(StartMajorOp),LookupMajorName(client->majorOp));
+                            XSERVER_REQUEST_DONE(Message, client->majorOp, client->sequence, client->index, result);
+                        }
+                        else
+                        {
+                            XSERVER_REQUEST_DONE(LookupMajorName(client->majorOp), client->majorOp, client->sequence, client->index, result);
+                        }
                     }
-                  }
                 }
 #endif
 
-                if (client->noClientException != Success) {
+                if (client->noClientException != Success)
+                {
                     CloseDownClient(client);
                     break;
                 }
-                else if (result != Success) {
-                    SendErrorToClient(client, client->majorOp,
-                                      client->minorOp,
-                                      client->errorValue, result);
+                else if (result != Success)
+                {
+                    SendErrorToClient(client, client->majorOp, client->minorOp, client->errorValue, result);
                     break;
                 }
             }
@@ -530,6 +560,23 @@ Dispatch(void)
                 client->smart_stop_tick = SmartScheduleTime;
         }
         dispatchException &= ~DE_PRIORITYCHANGE;
+    }
+    if (!wait)
+        reentrantcheck=0;
+}
+
+void
+Dispatch(void)
+{
+    nextFreeClientID = 1;
+    nClients = 0;
+
+    SmartScheduleSlice = SmartScheduleInterval;
+    init_client_ready();
+
+    while (!dispatchException) {
+        DispatchQueuedEvents(1);
+
     }
 #if defined(DDXBEFORERESET)
     ddxBeforeReset();
@@ -2234,12 +2281,8 @@ DoGetImage(ClientPtr client, int format, Drawable drawable,
         return BadAlloc;
     WriteReplyToClient(client, sizeof(xGetImageReply), &xgi);
 
-    if (pDraw->type == DRAWABLE_WINDOW) {
-        pVisibleRegion = NotClippedByChildren((WindowPtr) pDraw);
-        if (pVisibleRegion) {
-            RegionTranslate(pVisibleRegion, -pDraw->x, -pDraw->y);
-        }
-    }
+    if (pDraw->type == DRAWABLE_WINDOW)
+        pVisibleRegion = &((WindowPtr) pDraw)->borderClip;
 
     if (linesPerBuf == 0) {
         /* nothing to do */
@@ -2298,8 +2341,6 @@ DoGetImage(ClientPtr client, int format, Drawable drawable,
             }
         }
     }
-    if (pVisibleRegion)
-        RegionDestroy(pVisibleRegion);
     free(pBuf);
     return Success;
 }
@@ -3318,17 +3359,14 @@ ProcKillClient(ClientPtr client)
 
     rc = dixLookupClient(&killclient, stuff->id, client, DixDestroyAccess);
     if (rc == Success) {
-        CloseDownClient(killclient);
         if (client == killclient) {
-            /* force yield and return Success, so that Dispatch()
-             * doesn't try to touch client
-             */
+            MarkClientException(client);
             isItTimeToYield = TRUE;
         }
-        return Success;
+        else
+            CloseDownClient(killclient);
     }
-    else
-        return rc;
+    return rc;
 }
 
 int
@@ -3455,8 +3493,6 @@ CloseDownClient(ClientPtr client)
         if (grabState != GrabNone && grabClient == client) {
             UngrabServer(client);
         }
-        mark_client_not_ready(client);
-        xorg_list_del(&client->output_pending);
         BITCLEAR(grabWaiters, client->index);
         DeleteClientFromAnySelections(client);
         ReleaseActiveGrabs(client);
@@ -3486,6 +3522,8 @@ CloseDownClient(ClientPtr client)
             ClientSignal(client);
         ProcessWorkQueueZombies();
         CloseDownConnection(client);
+        output_pending_clear(client);
+        mark_client_not_ready(client);
 
         /* If the client made it to the Running stage, nClients has
          * been incremented on its behalf, so we need to decrement it
@@ -3743,7 +3781,12 @@ ProcEstablishConnection(ClientPtr client)
     prefix = (xConnClientPrefix *) ((char *) stuff + sz_xReq);
     auth_proto = (char *) prefix + sz_xConnClientPrefix;
     auth_string = auth_proto + pad_to_int32(prefix->nbytesAuthProto);
-    if ((prefix->majorVersion != X_PROTOCOL) ||
+
+    if ((client->req_len << 2) != sz_xReq + sz_xConnClientPrefix +
+	pad_to_int32(prefix->nbytesAuthProto) +
+	pad_to_int32(prefix->nbytesAuthString))
+        reason = "Bad length";
+    else if ((prefix->majorVersion != X_PROTOCOL) ||
         (prefix->minorVersion != X_PROTOCOL_REVISION))
         reason = "Protocol version mismatch";
     else
@@ -4006,6 +4049,16 @@ AddGPUScreen(Bool (*pfnInit) (ScreenPtr /*pScreen */ ,
     }
 
     update_desktop_dimensions();
+
+    /*
+     * We cannot register the Screen PRIVATE_CURSOR key if cursors are already
+     * created, because dix/privates.c does not have relocation code for
+     * PRIVATE_CURSOR. Once this is fixed the if() can be removed and we can
+     * register the Screen PRIVATE_CURSOR key unconditionally.
+     */
+    if (!dixPrivatesCreated(PRIVATE_CURSOR))
+        dixRegisterScreenPrivateKey(&cursorScreenDevPriv, pScreen,
+                                    PRIVATE_CURSOR, 0);
 
     return i;
 }

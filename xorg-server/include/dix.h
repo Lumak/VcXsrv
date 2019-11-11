@@ -136,6 +136,12 @@ typedef HWEventQueueType *HWEventQueuePtr;
 
 extern _X_EXPORT HWEventQueuePtr checkForInput[2];
 
+static inline Bool
+InputCheckPending(void)
+{
+    return (*checkForInput[0] != *checkForInput[1]);
+}
+
 typedef struct _TimeStamp {
     CARD32 months;              /* really ~49.7 days */
     CARD32 milliseconds;
@@ -255,13 +261,10 @@ extern _X_EXPORT Bool ClientSleep(ClientPtr client,
 extern _X_EXPORT Bool ClientSignal(ClientPtr /*client */ );
 #endif                          /* ___CLIENTSIGNAL_DEFINED___ */
 
-#ifndef ___CLIENTSIGNALALL_DEFINED___
-#define ___CLIENTSIGNALALL_DEFINED___
 #define CLIENT_SIGNAL_ANY ((void *)-1)
 extern _X_EXPORT int ClientSignalAll(ClientPtr /*client*/,
                                      ClientSleepProcPtr /*function*/,
                                      void * /*closure*/);
-#endif                          /* ___CLIENTSIGNALALL_DEFINED___ */
 
 extern _X_EXPORT void ClientWakeup(ClientPtr /*client */ );
 
@@ -549,11 +552,6 @@ ReinitializeRootWindow(WindowPtr win, int xoff, int yoff);
 #ifdef RANDR
 extern _X_EXPORT void
 ScreenRestructured(ScreenPtr pScreen);
-#endif
-
-#ifndef HAVE_FFS
-extern _X_EXPORT int
-ffs(int i);
 #endif
 
 /*

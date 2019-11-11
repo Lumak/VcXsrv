@@ -41,7 +41,7 @@ char **XListExtensions(
 	int count = 0;
 	register unsigned i;
 	register int length;
-	register xReq *req;
+	_X_UNUSED register xReq *req;
 	unsigned long rlen = 0;
 
 	LockDisplay(dpy);
@@ -55,7 +55,7 @@ char **XListExtensions(
 
 	if (rep.nExtensions) {
 	    list = Xmalloc (rep.nExtensions * sizeof (char *));
-	    if (rep.length < (INT_MAX >> 2)) {
+	    if (rep.length > 0 && rep.length < (INT_MAX >> 2)) {
 		rlen = rep.length << 2;
 		ch = Xmalloc (rlen + 1);
                 /* +1 to leave room for last null-terminator */
@@ -74,15 +74,20 @@ char **XListExtensions(
 	    /*
 	     * unpack into null terminated strings.
 	     */
-	    chend = ch + (rlen + 1);
-	    length = *ch;
+	    chend = ch + rlen;
+	    length = *(unsigned char *)ch;
 	    for (i = 0; i < rep.nExtensions; i++) {
 		if (ch + length < chend) {
 		    list[i] = ch+1;  /* skip over length */
 		    ch += length + 1; /* find next length ... */
-		    length = *ch;
+		    length = *(unsigned char *)ch;
 		    *ch = '\0'; /* and replace with null-termination */
 		    count++;
+		} else if (i == 0) {
+		    Xfree(list);
+		    Xfree(ch);
+		    list = NULL;
+		    break;
 		} else
 		    list[i] = NULL;
 	    }

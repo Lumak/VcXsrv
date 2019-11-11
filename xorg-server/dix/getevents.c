@@ -1112,9 +1112,12 @@ GetKeyboardEvents(InternalEvent *events, DeviceIntPtr pDev, int type,
     }
 #endif
 
-    if (type == KeymapNotify) {
+    if (type == EnterNotify) {
         source_type = EVENT_SOURCE_FOCUS;
         type = KeyPress;
+    } else if (type == LeaveNotify) {
+        source_type = EVENT_SOURCE_FOCUS;
+        type = KeyRelease;
     }
 
     /* refuse events from disabled devices */
@@ -1244,7 +1247,7 @@ transformRelative(DeviceIntPtr dev, ValuatorMask *mask)
 static void
 transformAbsolute(DeviceIntPtr dev, ValuatorMask *mask)
 {
-    double x, y, ox, oy;
+    double x, y, ox = 0.0, oy = 0.0;
     int has_x, has_y;
 
     has_x = valuator_mask_isset(mask, 0);

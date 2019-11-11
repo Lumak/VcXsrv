@@ -72,6 +72,13 @@ struct __GLXdrawable {
      ** Event mask
      */
     unsigned long eventMask;
+
+#ifdef PANORAMIX
+    struct __GLXdrawable ** pAll;  /* Points the array containing the drawables for all screens */
+#endif
 };
+
+extern int validGlxDrawable(ClientPtr client, XID id, int type, int access_mode,
+                            __GLXdrawable **drawable, int *err);
 
 #endif                          /* !__GLX_drawable_h__ */

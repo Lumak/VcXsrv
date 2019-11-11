@@ -30,8 +30,8 @@ THE SOFTWARE.
 
 
 #include <ft2build.h>
-#include <internal/ftdriver.h>
-#include <internal/ftstream.h>
+#include FT_INTERNAL_DRIVER_H
+#include FT_INTERNAL_STREAM_H
 
 
 FT_BEGIN_HEADER
@@ -161,6 +161,15 @@ FT_BEGIN_HEADER
     FT_CharMapRec  charmap;  /* a single charmap per face */
 
   } PCF_FaceRec, *PCF_Face;
+
+
+  typedef struct  PCF_DriverRec_
+  {
+    FT_DriverRec  root;
+
+    FT_Bool  no_long_family_names;
+
+  } PCF_DriverRec, *PCF_Driver;
 
 
   /* macros for pcf font format */

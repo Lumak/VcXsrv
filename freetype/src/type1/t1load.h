@@ -4,7 +4,7 @@
 /*                                                                         */
 /*    Type 1 font loader (specification).                                  */
 /*                                                                         */
-/*  Copyright 1996-2016 by                                                 */
+/*  Copyright 1996-2018 by                                                 */
 /*  David Turner, Robert Wilhelm, and Werner Lemberg.                      */
 /*                                                                         */
 /*  This file is part of the FreeType project, and may only be used,       */
@@ -21,8 +21,8 @@
 
 
 #include <ft2build.h>
-#include <internal/ftstream.h>
-#include <internal/psaux.h>
+#include FT_INTERNAL_STREAM_H
+#include FT_INTERNAL_POSTSCRIPT_AUX_H
 #include FT_MULTIPLE_MASTERS_H
 
 #include "t1parse.h"
@@ -70,7 +70,7 @@ FT_BEGIN_HEADER
   T1_Get_Multi_Master( T1_Face           face,
                        FT_Multi_Master*  master );
 
-  FT_LOCAL_DEF( FT_Error )
+  FT_LOCAL( FT_Error )
   T1_Get_MM_Var( T1_Face      face,
                  FT_MM_Var*  *master );
 
@@ -80,11 +80,25 @@ FT_BEGIN_HEADER
                    FT_Fixed*  coords );
 
   FT_LOCAL( FT_Error )
+  T1_Get_MM_Blend( T1_Face    face,
+                   FT_UInt    num_coords,
+                   FT_Fixed*  coords );
+
+  FT_LOCAL( FT_Error )
   T1_Set_MM_Design( T1_Face   face,
                     FT_UInt   num_coords,
                     FT_Long*  coords );
 
-  FT_LOCAL_DEF( FT_Error )
+  FT_LOCAL( FT_Error )
+  T1_Reset_MM_Blend( T1_Face  face,
+                     FT_UInt  instance_index );
+
+  FT_LOCAL( FT_Error )
+  T1_Get_Var_Design( T1_Face    face,
+                     FT_UInt    num_coords,
+                     FT_Fixed*  coords );
+
+  FT_LOCAL( FT_Error )
   T1_Set_Var_Design( T1_Face    face,
                      FT_UInt    num_coords,
                      FT_Fixed*  coords );

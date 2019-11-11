@@ -53,16 +53,17 @@ __glXDisp_GetCompressedTexImage(struct __GLXclientStateRec *cl, GLbyte * pc)
         const GLint level = *(GLint *) (pc + 4);
         GLint compsize = 0;
         char *answer = NULL, answerBuffer[200];
+        xGLXSingleReply reply = { 0, };
 
         glGetTexLevelParameteriv(target, level, GL_TEXTURE_COMPRESSED_IMAGE_SIZE,
                                  &compsize);
 
         if (compsize != 0) {
-            PFNGLGETCOMPRESSEDTEXIMAGEARBPROC GetCompressedTexImageARB =
-                __glGetProcAddress("glGetCompressedTexImageARB");
+            PFNGLGETCOMPRESSEDTEXIMAGEPROC GetCompressedTexImage =
+                __glGetProcAddress("glGetCompressedTexImage");
             __GLX_GET_ANSWER_BUFFER(answer, cl, compsize, 1);
             __glXClearErrorOccured();
-            GetCompressedTexImageARB(target, level, answer);
+            GetCompressedTexImage(target, level, answer);
         }
 
         if (__glXErrorOccured()) {
@@ -71,7 +72,7 @@ __glXDisp_GetCompressedTexImage(struct __GLXclientStateRec *cl, GLbyte * pc)
         }
         else {
             __GLX_BEGIN_REPLY(compsize);
-            ((xGLXGetTexImageReply *) &__glXReply)->width = compsize;
+            ((xGLXGetTexImageReply *) &reply)->width = compsize;
             __GLX_SEND_HEADER();
             __GLX_SEND_VOID_ARRAY(compsize);
         }
@@ -99,16 +100,17 @@ __glXDispSwap_GetCompressedTexImage(struct __GLXclientStateRec *cl, GLbyte * pc)
         const GLint level = (GLint) bswap_32(*(int *) (pc + 4));
         GLint compsize = 0;
         char *answer = NULL, answerBuffer[200];
+        xGLXSingleReply reply = { 0, };
 
         glGetTexLevelParameteriv(target, level, GL_TEXTURE_COMPRESSED_IMAGE_SIZE,
                                  &compsize);
 
         if (compsize != 0) {
-            PFNGLGETCOMPRESSEDTEXIMAGEARBPROC GetCompressedTexImageARB =
-                __glGetProcAddress("glGetCompressedTexImageARB");
+            PFNGLGETCOMPRESSEDTEXIMAGEPROC GetCompressedTexImage =
+                __glGetProcAddress("glGetCompressedTexImage");
             __GLX_GET_ANSWER_BUFFER(answer, cl, compsize, 1);
             __glXClearErrorOccured();
-            GetCompressedTexImageARB(target, level, answer);
+            GetCompressedTexImage(target, level, answer);
         }
 
         if (__glXErrorOccured()) {
@@ -117,7 +119,7 @@ __glXDispSwap_GetCompressedTexImage(struct __GLXclientStateRec *cl, GLbyte * pc)
         }
         else {
             __GLX_BEGIN_REPLY(compsize);
-            ((xGLXGetTexImageReply *) &__glXReply)->width = compsize;
+            ((xGLXGetTexImageReply *) &reply)->width = compsize;
             __GLX_SEND_HEADER();
             __GLX_SEND_VOID_ARRAY(compsize);
         }

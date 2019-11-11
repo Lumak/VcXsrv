@@ -75,11 +75,11 @@ winInitMultiWindowClass(void)
         wcx.style = CS_HREDRAW | CS_VREDRAW | (g_fNativeGl ? CS_OWNDC : 0);
         wcx.lpfnWndProc = winTopLevelWindowProc;
         wcx.cbClsExtra = 0;
-        wcx.cbWndExtra = 0;
+        wcx.cbWndExtra = WND_EXTRABYTES;
         wcx.hInstance = g_hInstance;
         wcx.hIcon = hIcon;
         wcx.hCursor = 0;
-        wcx.hbrBackground = (HBRUSH) GetStockObject(WHITE_BRUSH);
+        wcx.hbrBackground = NULL;
         wcx.lpszMenuName = NULL;
         wcx.lpszClassName = WINDOW_CLASS_X;
         wcx.hIconSm = hIconSmall;
@@ -395,6 +395,92 @@ winReparentWindowMultiWindow(WindowPtr pWin, WindowPtr pPriorParent)
     winUpdateWindowsWindow(pWin);
 }
 
+static int localConfigureWindow;
+int
+winConfigureWindow(WindowPtr pWin, Mask mask, XID *vlist, ClientPtr client)
+{
+  localConfigureWindow++;
+  int ret=ConfigureWindow(pWin, mask, vlist, client);
+  localConfigureWindow--;
+  return ret;
+}
+
+static int isWindowOnTop(HWND hAbove, HWND hBeneath)
+{
+    HWND hNext=GetNextWindow(hAbove, GW_HWNDNEXT);
+    while (hNext && hNext!=hBeneath)
+       hNext=GetNextWindow(hNext, GW_HWNDNEXT);
+    return hNext==hBeneath;
+}
+
+static void dowinRestackWindowMultiWindow(WindowPtr pWin)
+{
+    winWindowPriv(pWin);
+
+    if (localConfigureWindow)
+    {
+      return;
+    }
+    if (!pWinPriv->hWnd)
+    {
+      return;
+    }
+
+    WindowPtr pNextSib = pWin->nextSib;
+
+    if (pNextSib == NullWindow)
+    {
+        #ifdef _DEBUG
+        char window1[100];
+        GetWindowText(pWinPriv->hWnd, window1, 100);
+        ErrorF ("Setting windows %x(%s) to bottom\n", pWinPriv->hWnd, window1);
+        #endif
+        SetWindowPos(pWinPriv->hWnd, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE|SWP_NOSIZE);
+    }
+    else
+    {
+        /* Window is not at the bottom of the stack */
+	      winPrivWinPtr pNextSibPriv = winGetWindowPriv(pNextSib);
+
+        /* Handle case where siblings have not yet been created due to
+           lazy window creation optimization by first finding the next
+           sibling in the sibling list that has been created (if any)
+           and then putting the current window just above that sibling,
+           and if no next siblings have been created yet, then put it at
+           the bottom of the stack (since it might have a previous
+           sibling that should be above it). */
+        while (!pNextSibPriv->hWnd) {
+            pNextSib = pNextSib->nextSib;
+            if (pNextSib == NullWindow) {
+                /* Window is at the bottom of the stack */
+                #ifdef _DEBUG
+                char window1[100];
+                GetWindowText(pWinPriv->hWnd, window1, 100);
+                ErrorF ("Setting windows %x(%s) to bottom\n", pWinPriv->hWnd, window1);
+                #endif
+                SetWindowPos(pWinPriv->hWnd, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE|SWP_NOSIZE);
+                return;
+            }
+	          pNextSibPriv = winGetWindowPriv(pNextSib);
+        }
+
+        /* Bring window on top pNextSibPriv->hwnd, but only if it is not yet the case.
+         * ( Pay attention to the fact that pNextSibPriv->hwnd is the next X-window, and there
+         * can be non X-windos in between.)        */
+        if (!isWindowOnTop(pWinPriv->hWnd, pNextSibPriv->hWnd))
+        {
+            #ifdef _DEBUG
+            char window1[100];
+            char window2[100];
+            GetWindowText(pWinPriv->hWnd, window1, 100);
+            GetWindowText(pNextSibPriv->hWnd, window2, 100);
+            ErrorF ("Setting windows %x(%s) on top of %x(%s)\n", pWinPriv->hWnd, window1, pNextSibPriv->hWnd, window2);
+            #endif
+            SetWindowPos(pWinPriv->hWnd, pNextSibPriv->hWnd, 0, 0, 0, 0, SWP_NOMOVE|SWP_NOSIZE);
+        }
+    }
+}
+
 /*
  * RestackWindow - Shuffle the z-order of a window
  */
@@ -413,12 +499,8 @@ winRestackWindowMultiWindow(WindowPtr pWin, WindowPtr pOldNextSib)
         (*pScreen->RestackWindow) (pWin, pOldNextSib);
     WIN_WRAP(RestackWindow, winRestackWindowMultiWindow);
 
-    /*
-     * Calling winReorderWindowsMultiWindow here means our window manager
-     * (i.e. Windows Explorer) has initiative to determine Z order.
-     */
     if (pWin->nextSib != pOldNextSib)
-        winReorderWindowsMultiWindow();
+        dowinRestackWindowMultiWindow(pWin);
 }
 
 /*
@@ -484,30 +566,43 @@ winCreateWindowsWindow(WindowPtr pWin)
       }
     }
 
-    winDebug("winCreateWindowsWindow - %dx%d @ %dx%d\n", iWidth, iHeight, iX,
+    winDebug("winCreateWindowsWindow - 1 - %dx%d @ %dx%d\n", iWidth, iHeight, iX,
              iY);
 
     if (winMultiWindowGetTransientFor(pWin, &daddyId)) {
-        if (daddyId) {
+        if (daddyId && !pWin->overrideRedirect) {
             WindowPtr pParent;
             int res = dixLookupWindow(&pParent, daddyId, serverClient, DixReadAccess);
-            if (res == Success)
-                {
-                    winPrivWinPtr pParentPriv = winGetWindowPriv(pParent);
-                    hFore = pParentPriv->hWnd;
-                }
+            if (res == Success) {
+                winPrivWinPtr pParentPriv = winGetWindowPriv(pParent);
+                hFore = pParentPriv->hWnd;
+            }
         }
     }
-    else {
+    else if (!pWin->overrideRedirect) {
         /* Default positions if none specified */
         if (!winMultiWindowGetWMNormalHints(pWin, &hints))
             hints.flags = 0;
-        if (!(hints.flags & (USPosition | PPosition)) &&
-            !pWin->overrideRedirect) {
+
+
+        if ((hints.flags & USPosition) ||
+            ((hints.flags & PPosition) &&
+             ((pWin->drawable.x - pWin->borderWidth != 0) ||
+              (pWin->drawable.y - pWin->borderWidth != 0)))) {
+            /*
+              Always respect user specified position, respect program
+              specified position if it's not the origin
+            */
+        }
+        else {
+            /* Use default position */
             iX = CW_USEDEFAULT;
             iY = CW_USEDEFAULT;
         }
     }
+
+    winDebug("winCreateWindowsWindow - 2 - %dx%d @ %dx%d\n", iWidth,
+             iHeight, iX, iY);
 
     /* Make it WS_OVERLAPPED in create call since WS_POPUP doesn't support */
     /* CW_USEDEFAULT, change back to popup after creation */
@@ -530,7 +625,7 @@ winCreateWindowsWindow(WindowPtr pWin)
     iHeight = rc.bottom - rc.top;
     iWidth = rc.right - rc.left;
 
-    winDebug("winCreateWindowsWindow - %dx%d @ %dx%d\n", iWidth, iHeight, iX,
+    winDebug("winCreateWindowsWindow - 3 - %dx%d @ %dx%d\n", iWidth, iHeight, iX,
              iY);
 
     /* Create the window */
@@ -544,7 +639,7 @@ winCreateWindowsWindow(WindowPtr pWin)
                            iHeight,     /* Bottom edge */
                            hFore,       /* Null or Parent window if transient */
                            (HMENU) NULL,        /* No menu */
-                           GetModuleHandle(NULL),       /* Instance handle */
+                           g_hInstance,       /* Instance handle */
                            pWin);       /* ScreenPrivates */
     if (hWnd == NULL) {
         ErrorF("winCreateWindowsWindow - CreateWindowExA () failed: %d\n",
@@ -565,7 +660,7 @@ winCreateWindowsWindow(WindowPtr pWin)
     SetWindowPos(hWnd, 0, 0, 0, 0, 0,
                  SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOMOVE | SWP_NOSIZE |
                  SWP_NOACTIVATE);
-  
+
     /* Make sure it gets the proper system menu for a WS_POPUP, too */
     GetSystemMenu(hWnd, TRUE);
 
@@ -622,12 +717,12 @@ winDestroyWindowsWindow(WindowPtr pWin)
     pWinPriv->fWglUsed = FALSE;
 #endif
 
-    /* Process all messages on our queue */
+    /* Process all messages on our queue 
     while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
         if (g_hDlgDepthChange == 0 || !IsDialogMessage(g_hDlgDepthChange, &msg)) {
             DispatchMessage(&msg);
         }
-    }
+    }*/
 
     winInDestroyWindowsWindow = oldstate;
 
@@ -660,9 +755,6 @@ winUpdateWindowsWindow(WindowPtr pWin)
         /* Display the window without activating it */
         if (pWin->drawable.class != InputOnly)
             ShowWindow(pWinPriv->hWnd, SW_SHOWNOACTIVATE);
-
-        /* Send first paint message */
-        UpdateWindow(pWinPriv->hWnd);
     }
     else if (hWnd != NULL) {
         if (pWinPriv->fWglUsed) {
@@ -689,9 +781,13 @@ winUpdateWindowsWindow(WindowPtr pWin)
                 offsetx=0;
                 offsety=0;
             }
-            winDebug ("-winUpdateWindowsWindow: %x changing parent to %x and moving to %d,%d\n",pWinPriv->hWnd,hParentWnd,pWin->drawable.x-offsetx,pWin->drawable.y-offsety);
-            SetParent(pWinPriv->hWnd,hParentWnd);
-            SetWindowPos(pWinPriv->hWnd,NULL,pWin->drawable.x-offsetx,pWin->drawable.y-offsety,0,0,SWP_NOSIZE|SWP_NOZORDER|SWP_SHOWWINDOW);
+            if (hParentWnd == NULL)
+                winDestroyWindowsWindow (pWin);
+            else {
+                winDebug ("-winUpdateWindowsWindow: %x changing parent to %x and moving to %d,%d\n",pWinPriv->hWnd,hParentWnd,pWin->drawable.x-offsetx,pWin->drawable.y-offsety);
+                SetParent(pWinPriv->hWnd,hParentWnd);
+                SetWindowPos(pWinPriv->hWnd,NULL,pWin->drawable.x-offsetx,pWin->drawable.y-offsety,0,0,SWP_NOSIZE|SWP_NOZORDER|SWP_SHOWWINDOW);
+            }
         }
         else {
             /* Destroy the Windows window if its parents are destroyed */
@@ -755,12 +851,16 @@ winReorderWindowsMultiWindow(void)
     DWORD dwCurrentProcessID = GetCurrentProcessId();
     DWORD dwWindowProcessID = 0;
 
-    winDebug("winReorderWindowsMultiWindow\n");
+#if CYGMULTIWINDOW_DEBUG || CYGWINDOWING_DEBUG
+    winTrace("winReorderWindowsMultiWindow\n");
+#endif
 
     if (fRestacking) {
         /* It is a recusive call so immediately exit */
-        winDebug("winReorderWindowsMultiWindow - "
+#if CYGWINDOWING_DEBUG
+        ErrorF("winReorderWindowsMultiWindow - "
                "exit because fRestacking == TRUE\n");
+#endif
         return;
     }
     fRestacking = TRUE;
@@ -780,13 +880,13 @@ winReorderWindowsMultiWindow(void)
             if (!pWinSib) {     /* 1st window - raise to the top */
                 vlist[0] = Above;
 
-                ConfigureWindow(pWin, CWStackMode, vlist, wClient(pWin));
+                winConfigureWindow(pWin, CWStackMode, vlist, wClient(pWin));
             }
             else {              /* 2nd or deeper windows - just below the previous one */
                 vlist[0] = winGetWindowID(pWinSib);
                 vlist[1] = Below;
 
-                ConfigureWindow(pWin, CWSibling | CWStackMode,
+                winConfigureWindow(pWin, CWSibling | CWStackMode,
                                 vlist, wClient(pWin));
             }
         }
@@ -871,6 +971,9 @@ winAdjustXWindow(WindowPtr pWin, HWND hwnd)
 #define WIDTH(rc) (rc.right - rc.left)
 #define HEIGHT(rc) (rc.bottom - rc.top)
 
+    if( !pWin->realized) //  IZI  Window is being destroyed?
+        return 0;
+
     winDebug("winAdjustXWindow\n");
 
     if (IsIconic(hwnd)) {
@@ -881,7 +984,7 @@ winAdjustXWindow(WindowPtr pWin, HWND hwnd)
          */
         vlist[0] = 0;
         vlist[1] = 0;
-        return ConfigureWindow(pWin, CWX | CWY, vlist, wClient(pWin));
+        return winConfigureWindow(pWin, CWX | CWY, vlist, wClient(pWin));
     }
 
     pDraw = &pWin->drawable;
@@ -923,7 +1026,7 @@ winAdjustXWindow(WindowPtr pWin, HWND hwnd)
      * Adjust.
      * We may only need to move (vlist[0] and [1]), or only resize
      * ([2] and [3]) but currently we set all the parameters and leave
-     * the decision to ConfigureWindow.  The reason is code simplicity.
+     * the decision to winConfigureWindow.  The reason is code simplicity.
      */
     vlist[0] = pDraw->x + dX - wBorderWidth(pWin);
     vlist[1] = pDraw->y + dY - wBorderWidth(pWin);
@@ -933,8 +1036,8 @@ winAdjustXWindow(WindowPtr pWin, HWND hwnd)
     winDebug("\tConfigureWindow to (%u, %u) - %ux%u\n",
            (unsigned int)vlist[0], (unsigned int)vlist[1],
            (unsigned int)vlist[2], (unsigned int)vlist[3]);
-    return ConfigureWindow(pWin, CWX | CWY | CWWidth | CWHeight,
-                           vlist, wClient(pWin));
+    return winConfigureWindow(pWin, CWX | CWY | CWWidth | CWHeight,
+                              vlist, wClient(pWin));
 
 #undef WIDTH
 #undef HEIGHT

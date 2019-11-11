@@ -47,7 +47,6 @@ static const int version_requests[] = {
 /* Forward declarations */
 static void SGEGenericEvent(xEvent *from, xEvent *to);
 
-#define NUM_VERSION_REQUESTS	(sizeof (version_requests) / sizeof (version_requests[0]))
 #define EXT_MASK(ext) ((ext) & 0x7F)
 
 /************************************************************/
@@ -64,14 +63,16 @@ ProcGEQueryVersion(ClientPtr client)
 
     REQUEST_SIZE_MATCH(xGEQueryVersionReq);
 
-    rep.repType = X_Reply;
-    rep.RepType = X_GEQueryVersion;
-    rep.sequenceNumber = client->sequence;
-    rep.length = 0;
+    rep = (xGEQueryVersionReply) {
+        .repType = X_Reply,
+        .RepType = X_GEQueryVersion,
+        .sequenceNumber = client->sequence,
+        .length = 0,
 
-    /* return the supported version by the server */
-    rep.majorVersion = SERVER_GE_MAJOR_VERSION;
-    rep.minorVersion = SERVER_GE_MINOR_VERSION;
+        /* return the supported version by the server */
+        .majorVersion = SERVER_GE_MAJOR_VERSION,
+        .minorVersion = SERVER_GE_MINOR_VERSION
+    };
 
     /* Remember version the client requested */
     pGEClient->major_version = stuff->majorVersion;
@@ -96,7 +97,7 @@ static int (*ProcGEVector[GENumberRequests]) (ClientPtr) = {
 /************************************************************/
 /*                swapped request handlers                  */
 /************************************************************/
-static int
+static int _X_COLD
 SProcGEQueryVersion(ClientPtr client)
 {
     REQUEST(xGEQueryVersionReq);
@@ -125,7 +126,7 @@ ProcGEDispatch(ClientPtr client)
 
     REQUEST(xGEReq);
 
-    if (pGEClient->major_version >= NUM_VERSION_REQUESTS)
+    if (pGEClient->major_version >= ARRAY_SIZE(version_requests))
         return BadRequest;
     if (stuff->ReqType > version_requests[pGEClient->major_version])
         return BadRequest;
@@ -134,7 +135,7 @@ ProcGEDispatch(ClientPtr client)
 }
 
 /* dispatch swapped requests */
-static int
+static int _X_COLD
 SProcGEDispatch(ClientPtr client)
 {
     REQUEST(xGEReq);
@@ -157,7 +158,7 @@ GEResetProc(ExtensionEntry * extEntry)
  *  written on the wire, this one calls the registered swap function to do the
  *  work.
  */
-static void
+static void _X_COLD
 SGEGenericEvent(xEvent *from, xEvent *to)
 {
     xGenericEvent *gefrom = (xGenericEvent *) from;

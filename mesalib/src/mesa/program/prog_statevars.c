@@ -54,7 +54,7 @@
  * The program parser will produce the state[] values.
  */
 static void
-_mesa_fetch_state(struct gl_context *ctx, const gl_state_index state[],
+_mesa_fetch_state(struct gl_context *ctx, const gl_state_index16 state[],
                   gl_constant_value *val)
 {
    GLfloat *value = &val->f;
@@ -215,28 +215,28 @@ _mesa_fetch_state(struct gl_context *ctx, const gl_state_index state[],
          /* state[2] is the texgen attribute */
          switch (state[2]) {
          case STATE_TEXGEN_EYE_S:
-            COPY_4V(value, ctx->Texture.Unit[unit].GenS.EyePlane);
+            COPY_4V(value, ctx->Texture.FixedFuncUnit[unit].GenS.EyePlane);
             return;
          case STATE_TEXGEN_EYE_T:
-            COPY_4V(value, ctx->Texture.Unit[unit].GenT.EyePlane);
+            COPY_4V(value, ctx->Texture.FixedFuncUnit[unit].GenT.EyePlane);
             return;
          case STATE_TEXGEN_EYE_R:
-            COPY_4V(value, ctx->Texture.Unit[unit].GenR.EyePlane);
+            COPY_4V(value, ctx->Texture.FixedFuncUnit[unit].GenR.EyePlane);
             return;
          case STATE_TEXGEN_EYE_Q:
-            COPY_4V(value, ctx->Texture.Unit[unit].GenQ.EyePlane);
+            COPY_4V(value, ctx->Texture.FixedFuncUnit[unit].GenQ.EyePlane);
             return;
          case STATE_TEXGEN_OBJECT_S:
-            COPY_4V(value, ctx->Texture.Unit[unit].GenS.ObjectPlane);
+            COPY_4V(value, ctx->Texture.FixedFuncUnit[unit].GenS.ObjectPlane);
             return;
          case STATE_TEXGEN_OBJECT_T:
-            COPY_4V(value, ctx->Texture.Unit[unit].GenT.ObjectPlane);
+            COPY_4V(value, ctx->Texture.FixedFuncUnit[unit].GenT.ObjectPlane);
             return;
          case STATE_TEXGEN_OBJECT_R:
-            COPY_4V(value, ctx->Texture.Unit[unit].GenR.ObjectPlane);
+            COPY_4V(value, ctx->Texture.FixedFuncUnit[unit].GenR.ObjectPlane);
             return;
          case STATE_TEXGEN_OBJECT_Q:
-            COPY_4V(value, ctx->Texture.Unit[unit].GenQ.ObjectPlane);
+            COPY_4V(value, ctx->Texture.FixedFuncUnit[unit].GenQ.ObjectPlane);
             return;
          default:
             _mesa_problem(ctx, "Invalid texgen state in fetch_state");
@@ -248,9 +248,9 @@ _mesa_fetch_state(struct gl_context *ctx, const gl_state_index state[],
          /* state[1] is the texture unit */
          const GLuint unit = (GLuint) state[1];
          if (_mesa_get_clamp_fragment_color(ctx, ctx->DrawBuffer))
-            COPY_4V(value, ctx->Texture.Unit[unit].EnvColor);
+            COPY_4V(value, ctx->Texture.FixedFuncUnit[unit].EnvColor);
          else
-            COPY_4V(value, ctx->Texture.Unit[unit].EnvColorUnclamped);
+            COPY_4V(value, ctx->Texture.FixedFuncUnit[unit].EnvColorUnclamped);
       }
       return;
    case STATE_FOG_COLOR:
@@ -373,14 +373,17 @@ _mesa_fetch_state(struct gl_context *ctx, const gl_state_index state[],
                COPY_4V(value, ctx->FragmentProgram.Parameters[idx]);
                return;
             case STATE_LOCAL:
-               if (!ctx->FragmentProgram.Current->Base.LocalParams) {
-                  ctx->FragmentProgram.Current->Base.LocalParams =
-                     calloc(MAX_PROGRAM_LOCAL_PARAMS, sizeof(float[4]));
-                  if (!ctx->FragmentProgram.Current->Base.LocalParams)
+               if (!ctx->FragmentProgram.Current->arb.LocalParams) {
+                  ctx->FragmentProgram.Current->arb.LocalParams =
+                     rzalloc_array_size(ctx->FragmentProgram.Current,
+                                        sizeof(float[4]),
+                                        MAX_PROGRAM_LOCAL_PARAMS);
+                  if (!ctx->FragmentProgram.Current->arb.LocalParams)
                      return;
                }
 
-               COPY_4V(value, ctx->FragmentProgram.Current->Base.LocalParams[idx]);
+               COPY_4V(value,
+                       ctx->FragmentProgram.Current->arb.LocalParams[idx]);
                return;
             default:
                _mesa_problem(ctx, "Bad state switch in _mesa_fetch_state()");
@@ -399,14 +402,17 @@ _mesa_fetch_state(struct gl_context *ctx, const gl_state_index state[],
                COPY_4V(value, ctx->VertexProgram.Parameters[idx]);
                return;
             case STATE_LOCAL:
-               if (!ctx->VertexProgram.Current->Base.LocalParams) {
-                  ctx->VertexProgram.Current->Base.LocalParams =
-                     calloc(MAX_PROGRAM_LOCAL_PARAMS, sizeof(float[4]));
-                  if (!ctx->VertexProgram.Current->Base.LocalParams)
+               if (!ctx->VertexProgram.Current->arb.LocalParams) {
+                  ctx->VertexProgram.Current->arb.LocalParams =
+                     rzalloc_array_size(ctx->VertexProgram.Current,
+                                        sizeof(float[4]),
+                                        MAX_PROGRAM_LOCAL_PARAMS);
+                  if (!ctx->VertexProgram.Current->arb.LocalParams)
                      return;
                }
 
-               COPY_4V(value, ctx->VertexProgram.Current->Base.LocalParams[idx]);
+               COPY_4V(value,
+                       ctx->VertexProgram.Current->arb.LocalParams[idx]);
                return;
             default:
                _mesa_problem(ctx, "Bad state switch in _mesa_fetch_state()");
@@ -416,7 +422,7 @@ _mesa_fetch_state(struct gl_context *ctx, const gl_state_index state[],
       return;
 
    case STATE_NORMAL_SCALE:
-      ASSIGN_4V(value, ctx->_ModelViewInvScale, 0, 0, 1);
+      ASSIGN_4V(value, ctx->_ModelViewInvScaleEyespace, 0, 0, 1);
       return;
 
    case STATE_INTERNAL:
@@ -450,24 +456,6 @@ _mesa_fetch_state(struct gl_context *ctx, const gl_state_index state[],
                    ctx->_ModelViewInvScale, 
                    ctx->_ModelViewInvScale, 
                    1);
-         return;
-
-      case STATE_TEXRECT_SCALE:
-         /* Value = { 1/texWidth, 1/texHeight, 0, 1 }.
-          * Used to convert unnormalized texcoords to normalized texcoords.
-          */
-         {
-            const int unit = (int) state[2];
-            const struct gl_texture_object *texObj
-               = ctx->Texture.Unit[unit]._Current;
-            if (texObj) {
-               struct gl_texture_image *texImage = texObj->Image[0][0];
-               ASSIGN_4V(value,
-                         (GLfloat) (1.0 / texImage->Width),
-                         (GLfloat) (1.0 / texImage->Height),
-                         0.0f, 1.0f);
-            }
-         }
          return;
 
       case STATE_FOG_PARAMS_OPTIMIZED:
@@ -583,7 +571,7 @@ _mesa_fetch_state(struct gl_context *ctx, const gl_state_index state[],
       case STATE_FB_WPOS_Y_TRANSFORM:
          /* A driver may negate this conditional by using ZW swizzle
           * instead of XY (based on e.g. some other state). */
-         if (_mesa_is_user_fbo(ctx->DrawBuffer)) {
+         if (!ctx->DrawBuffer->FlipY) {
             /* Identity (XY) followed by flipping Y upside down (ZW). */
             value[0] = 1.0F;
             value[1] = 0.0F;
@@ -604,13 +592,14 @@ _mesa_fetch_state(struct gl_context *ctx, const gl_state_index state[],
 
       case STATE_TES_PATCH_VERTICES_IN:
          if (ctx->TessCtrlProgram._Current)
-            val[0].i = ctx->TessCtrlProgram._Current->VerticesOut;
+            val[0].i = ctx->TessCtrlProgram._Current->info.tess.tcs_vertices_out;
          else
             val[0].i = ctx->TessCtrlProgram.patch_vertices;
          return;
 
       case STATE_ADVANCED_BLENDING_MODE:
-         val[0].i = ctx->Color.BlendEnabled ? ctx->Color._AdvancedBlendMode : 0;
+         val[0].i = _mesa_get_advanced_blend_sh_constant(
+                      ctx->Color.BlendEnabled, ctx->Color._AdvancedBlendMode);
          return;
 
       /* XXX: make sure new tokens added here are also handled in the 
@@ -639,7 +628,7 @@ _mesa_fetch_state(struct gl_context *ctx, const gl_state_index state[],
  * some GL state has changed.
  */
 GLbitfield
-_mesa_program_state_flags(const gl_state_index state[STATE_LENGTH])
+_mesa_program_state_flags(const gl_state_index16 state[STATE_LENGTH])
 {
    switch (state[0]) {
    case STATE_MATERIAL:
@@ -653,9 +642,9 @@ _mesa_program_state_flags(const gl_state_index state[STATE_LENGTH])
       return _NEW_LIGHT;
 
    case STATE_TEXGEN:
-      return _NEW_TEXTURE;
+      return _NEW_TEXTURE_STATE;
    case STATE_TEXENV_COLOR:
-      return _NEW_TEXTURE | _NEW_BUFFERS | _NEW_FRAG_CLAMP;
+      return _NEW_TEXTURE_STATE | _NEW_BUFFERS | _NEW_FRAG_CLAMP;
 
    case STATE_FOG_COLOR:
       return _NEW_FOG | _NEW_BUFFERS | _NEW_FRAG_CLAMP;
@@ -703,8 +692,6 @@ _mesa_program_state_flags(const gl_state_index state[STATE_LENGTH])
       case STATE_NORMAL_SCALE:
          return _NEW_MODELVIEW;
 
-      case STATE_TEXRECT_SCALE:
-	 return _NEW_TEXTURE;
       case STATE_FOG_PARAMS_OPTIMIZED:
 	 return _NEW_FOG;
       case STATE_POINT_SIZE_CLAMPED:
@@ -899,9 +886,6 @@ append_token(char *dst, gl_state_index k)
    case STATE_NORMAL_SCALE:
       append(dst, "normalScale");
       break;
-   case STATE_TEXRECT_SCALE:
-      append(dst, "texrectScale");
-      break;
    case STATE_FOG_PARAMS_OPTIMIZED:
       append(dst, "fogParamsOptimized");
       break;
@@ -964,7 +948,7 @@ append_index(char *dst, GLint index)
  * Use free() to deallocate the string.
  */
 char *
-_mesa_program_state_string(const gl_state_index state[STATE_LENGTH])
+_mesa_program_state_string(const gl_state_index16 state[STATE_LENGTH])
 {
    char str[1000] = "";
    char tmp[30];
@@ -1092,9 +1076,10 @@ _mesa_load_state_parameters(struct gl_context *ctx,
 
    for (i = 0; i < paramList->NumParameters; i++) {
       if (paramList->Parameters[i].Type == PROGRAM_STATE_VAR) {
+         unsigned pvo = paramList->ParameterValueOffset[i];
          _mesa_fetch_state(ctx,
 			   paramList->Parameters[i].StateIndexes,
-                           &paramList->ParameterValues[i][0]);
+                           paramList->ParameterValues + pvo);
       }
    }
 }

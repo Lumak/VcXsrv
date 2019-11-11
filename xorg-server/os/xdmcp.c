@@ -486,14 +486,15 @@ XdmcpRegisterConnection(int type, const char *address, int addrlen)
                      IN6_IS_ADDR_V4MAPPED((const struct in6_addr *) address)) {
                 fromAddr = &((struct sockaddr_in *) &FromAddress)->sin_addr;
                 regAddr =
-                    &((struct sockaddr_in6 *) &address)->sin6_addr.s6_addr[12];
+                    &((struct sockaddr_in6 *) address)->sin6_addr.s6_addr[12];
                 regAddrlen = sizeof(struct in_addr);
             }
         }
 #endif
-        if (!fromAddr || memcmp(regAddr, fromAddr, regAddrlen) != 0) {
+        if (!fromAddr) {
             return;
         }
+        address = fromAddr; // Register the from address, otherwise some xdmcp managers decline the connection
     }
     if (ConnectionAddresses.length + 1 == 256)
         return;
@@ -569,10 +570,9 @@ XdmcpRegisterDisplayClass(const char *name, int length)
 }
 
 static void
-xdmcp_start(void)
+xdmcp_reset(void)
 {
     timeOutRtx = 0;
-    get_xdmcp_sock();
     if (xdmcpSocket >= 0)
         SetNotifyFd(xdmcpSocket, XdmcpSocketNotify, X_NOTIFY_READ, NULL);
 #if defined(IPv6) && defined(AF_INET6)
@@ -581,6 +581,13 @@ xdmcp_start(void)
 #endif
     xdmcp_timer = TimerSet(NULL, 0, 0, XdmcpTimerNotify, NULL);
     send_packet();
+}
+
+static void
+xdmcp_start(void)
+{
+    get_xdmcp_sock();
+    xdmcp_reset();
 }
 
 /*
@@ -637,7 +644,7 @@ XdmcpReset(void)
 {
     state = XDM_INIT_STATE;
     if (state != XDM_OFF)
-        xdmcp_start();
+        xdmcp_reset();
 }
 
 /*
@@ -905,7 +912,7 @@ XdmcpDeadSession(const char *reason)
     ErrorF("XDM: %s, declaring session dead\n", reason);
     state = XDM_INIT_STATE;
     isItTimeToYield = TRUE;
-    dispatchException |= DE_RESET;
+    dispatchException |= (OneSession ? DE_TERMINATE : DE_RESET);
     TimerCancel(xdmcp_timer);
     timeOutRtx = 0;
     send_packet();
@@ -1014,6 +1021,7 @@ static void
 get_xdmcp_sock(void)
 {
     int soopts = 1;
+    int socketfd = -1;
 
 #if defined(IPv6) && defined(AF_INET6)
     if ((xdmcpSocket6 = socket(AF_INET6, SOCK_DGRAM, 0)) < 0)
@@ -1026,8 +1034,18 @@ get_xdmcp_sock(void)
                         sizeof(soopts)) < 0)
         XdmcpWarning("UDP set broadcast socket-option failed");
 #endif                          /* SO_BROADCAST */
-    if (xdmcpSocket >= 0 && xdm_from != NULL) {
-        if (bind(xdmcpSocket, (struct sockaddr *) &FromAddress,
+
+    if (xdm_from == NULL)
+        return;
+
+    if (SOCKADDR_FAMILY(FromAddress) == AF_INET)
+        socketfd = xdmcpSocket;
+#if defined(IPv6) && defined(AF_INET6)
+    else if (SOCKADDR_FAMILY(FromAddress) == AF_INET6)
+        socketfd = xdmcpSocket6;
+#endif
+    if (socketfd >= 0) {
+        if (bind(socketfd, (struct sockaddr *) &FromAddress,
                  FromAddressLen) < 0) {
             FatalError("Xserver: failed to bind to -from address: %s\n",
                        xdm_from);

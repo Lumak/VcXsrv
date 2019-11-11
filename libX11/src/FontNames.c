@@ -43,6 +43,7 @@ int *actualCount)	/* RETURN */
     register int length;
     char **flist = NULL;
     char *ch = NULL;
+    char *chstart;
     char *chend;
     int count = 0;
     xListFontsReply rep;
@@ -66,7 +67,7 @@ int *actualCount)	/* RETURN */
 
     if (rep.nFonts) {
 	flist = Xmalloc (rep.nFonts * sizeof(char *));
-	if (rep.length < (INT_MAX >> 2)) {
+	if (rep.length > 0 && rep.length < (INT_MAX >> 2)) {
 	    rlen = rep.length << 2;
 	    ch = Xmalloc(rlen + 1);
 	    /* +1 to leave room for last null-terminator */
@@ -86,7 +87,8 @@ int *actualCount)	/* RETURN */
 	/*
 	 * unpack into null terminated strings.
 	 */
-	chend = ch + (rlen + 1);
+	chstart = ch;
+	chend = ch + rlen;
 	length = *(unsigned char *)ch;
 	*ch = 1; /* make sure it is non-zero for XFreeFontNames */
 	for (i = 0; i < rep.nFonts; i++) {
@@ -96,8 +98,13 @@ int *actualCount)	/* RETURN */
 		length = *(unsigned char *)ch;
 		*ch = '\0';  /* and replace with null-termination */
 		count++;
-	    } else
-		flist[i] = NULL;
+	    } else {
+                Xfree(chstart);
+                Xfree(flist);
+                flist = NULL;
+                count = 0;
+                break;
+            }
 	}
     }
     *actualCount = count;

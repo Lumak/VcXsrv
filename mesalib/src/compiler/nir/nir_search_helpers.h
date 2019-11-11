@@ -28,35 +28,31 @@
 #define _NIR_SEARCH_HELPERS_
 
 #include "nir.h"
-
-static inline bool
-__is_power_of_two(unsigned int x)
-{
-   return ((x != 0) && !(x & (x - 1)));
-}
+#include "util/bitscan.h"
+#include <math.h>
 
 static inline bool
 is_pos_power_of_two(nir_alu_instr *instr, unsigned src, unsigned num_components,
                     const uint8_t *swizzle)
 {
-   nir_const_value *val = nir_src_as_const_value(instr->src[src].src);
-
-   /* only constant src's: */
-   if (!val)
+   /* only constant srcs: */
+   if (!nir_src_is_const(instr->src[src].src))
       return false;
 
    for (unsigned i = 0; i < num_components; i++) {
       switch (nir_op_infos[instr->op].input_types[src]) {
-      case nir_type_int:
-         if (val->i32[swizzle[i]] < 0)
-            return false;
-         if (!__is_power_of_two(val->i32[swizzle[i]]))
-            return false;
-         break;
-      case nir_type_uint:
-         if (!__is_power_of_two(val->u32[swizzle[i]]))
+      case nir_type_int: {
+         int64_t val = nir_src_comp_as_int(instr->src[src].src, swizzle[i]);
+         if (val <= 0 || !util_is_power_of_two_or_zero64(val))
             return false;
          break;
+      }
+      case nir_type_uint: {
+         uint64_t val = nir_src_comp_as_uint(instr->src[src].src, swizzle[i]);
+         if (val == 0 || !util_is_power_of_two_or_zero64(val))
+            return false;
+         break;
+      }
       default:
          return false;
       }
@@ -69,26 +65,99 @@ static inline bool
 is_neg_power_of_two(nir_alu_instr *instr, unsigned src, unsigned num_components,
                     const uint8_t *swizzle)
 {
-   nir_const_value *val = nir_src_as_const_value(instr->src[src].src);
-
-   /* only constant src's: */
-   if (!val)
+   /* only constant srcs: */
+   if (!nir_src_is_const(instr->src[src].src))
       return false;
 
    for (unsigned i = 0; i < num_components; i++) {
       switch (nir_op_infos[instr->op].input_types[src]) {
-      case nir_type_int:
-         if (val->i32[swizzle[i]] > 0)
-            return false;
-         if (!__is_power_of_two(abs(val->i32[swizzle[i]])))
+      case nir_type_int: {
+         int64_t val = nir_src_comp_as_int(instr->src[src].src, swizzle[i]);
+         if (val >= 0 || !util_is_power_of_two_or_zero64(-val))
             return false;
          break;
+      }
       default:
          return false;
       }
    }
 
    return true;
+}
+
+static inline bool
+is_zero_to_one(nir_alu_instr *instr, unsigned src, unsigned num_components,
+               const uint8_t *swizzle)
+{
+   /* only constant srcs: */
+   if (!nir_src_is_const(instr->src[src].src))
+      return false;
+
+   for (unsigned i = 0; i < num_components; i++) {
+      switch (nir_op_infos[instr->op].input_types[src]) {
+      case nir_type_float: {
+         double val = nir_src_comp_as_float(instr->src[src].src, swizzle[i]);
+         if (isnan(val) || val < 0.0f || val > 1.0f)
+            return false;
+         break;
+      }
+      default:
+         return false;
+      }
+   }
+
+   return true;
+}
+
+static inline bool
+is_not_const(nir_alu_instr *instr, unsigned src, UNUSED unsigned num_components,
+             UNUSED const uint8_t *swizzle)
+{
+   return !nir_src_is_const(instr->src[src].src);
+}
+
+static inline bool
+is_used_more_than_once(nir_alu_instr *instr)
+{
+   bool zero_if_use = list_empty(&instr->dest.dest.ssa.if_uses);
+   bool zero_use = list_empty(&instr->dest.dest.ssa.uses);
+
+   if (zero_use && zero_if_use)
+      return false;
+   else if (zero_use && list_is_singular(&instr->dest.dest.ssa.if_uses))
+      return false;
+   else if (zero_if_use && list_is_singular(&instr->dest.dest.ssa.uses))
+      return false;
+
+   return true;
+}
+
+static inline bool
+is_used_once(nir_alu_instr *instr)
+{
+   bool zero_if_use = list_empty(&instr->dest.dest.ssa.if_uses);
+   bool zero_use = list_empty(&instr->dest.dest.ssa.uses);
+
+   if (zero_if_use && zero_use)
+      return false;
+
+   if (!zero_if_use && list_is_singular(&instr->dest.dest.ssa.uses))
+     return false;
+
+   if (!zero_use && list_is_singular(&instr->dest.dest.ssa.if_uses))
+     return false;
+
+   if (!list_is_singular(&instr->dest.dest.ssa.if_uses) &&
+       !list_is_singular(&instr->dest.dest.ssa.uses))
+      return false;
+
+   return true;
+}
+
+static inline bool
+is_not_used_by_if(nir_alu_instr *instr)
+{
+   return list_empty(&instr->dest.dest.ssa.if_uses);
 }
 
 #endif /* _NIR_SEARCH_ */

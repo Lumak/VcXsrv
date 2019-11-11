@@ -40,7 +40,6 @@
  * exec_list or any structure in which an \c exec_list is embedded.
  */
 
-#pragma once
 #ifndef LIST_CONTAINER_H
 #define LIST_CONTAINER_H
 
@@ -56,11 +55,7 @@ struct exec_node {
    struct exec_node *prev;
 
 #ifdef __cplusplus
-   DECLARE_RALLOC_CXX_OPERATORS(exec_node)
-   static void operator delete(void *node, void *ctx)
-   {
-      ralloc_free(node);
-   }
+   DECLARE_RZALLOC_CXX_OPERATORS(exec_node)
 
    exec_node() : next(NULL), prev(NULL)
    {
@@ -292,10 +287,6 @@ struct exec_list {
 
 #ifdef __cplusplus
    DECLARE_RALLOC_CXX_OPERATORS(exec_list)
-   static void operator delete(void *node, void *ctx)
-   {
-      ralloc_free(node);
-   }
 
    exec_list()
    {
@@ -656,12 +647,12 @@ inline void exec_node::insert_before(exec_list *before)
 #endif
 
 #define foreach_in_list(__type, __inst, __list)      \
-   for (__type *(__inst) = (__type *)(__list)->head_sentinel.next; \
+   for (__type *__inst = (__type *)(__list)->head_sentinel.next; \
         !(__inst)->is_tail_sentinel();               \
         (__inst) = (__type *)(__inst)->next)
 
 #define foreach_in_list_reverse(__type, __inst, __list)   \
-   for (__type *(__inst) = (__type *)(__list)->tail_sentinel.prev; \
+   for (__type *__inst = (__type *)(__list)->tail_sentinel.prev; \
         !(__inst)->is_head_sentinel();                    \
         (__inst) = (__type *)(__inst)->prev)
 
@@ -681,7 +672,7 @@ inline void exec_node::insert_before(exec_list *before)
         __node = __prev, __prev = (__type *)__prev->prev)
 
 #define foreach_in_list_use_after(__type, __inst, __list) \
-   __type *(__inst);                                      \
+   __type *__inst;                                        \
    for ((__inst) = (__type *)(__list)->head_sentinel.next; \
         !(__inst)->is_tail_sentinel();                    \
         (__inst) = (__type *)(__inst)->next)
@@ -705,6 +696,11 @@ inline void exec_node::insert_before(exec_list *before)
    for (__type * __node =						\
          exec_node_data(__type, (__list)->head_sentinel.next, __field); \
 	(__node)->__field.next != NULL; 				\
+	(__node) = exec_node_data(__type, (__node)->__field.next, __field))
+
+#define foreach_list_typed_from(__type, __node, __field, __list, __start)  \
+   for (__type * __node = exec_node_data(__type, (__start), __field);      \
+	(__node)->__field.next != NULL;                                    \
 	(__node) = exec_node_data(__type, (__node)->__field.next, __field))
 
 #define foreach_list_typed_reverse(__type, __node, __field, __list)        \

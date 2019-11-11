@@ -96,11 +96,11 @@ _tnl_CreateContext( struct gl_context *ctx )
       insert_at_tail( tnl->_ShineTabList, s );
    }
 
-   /* plug in the VBO drawing function */
-   vbo_set_draw_func(ctx, _tnl_draw_prims);
-
    _math_init_transformation();
    _math_init_translate();
+
+   /* Keep our list of tnl_vertex_array inputs */
+   _tnl_init_inputs(&tnl->draw_arrays);
 
    return GL_TRUE;
 }
@@ -131,8 +131,8 @@ void
 _tnl_InvalidateState( struct gl_context *ctx, GLuint new_state )
 {
    TNLcontext *tnl = TNL_CONTEXT(ctx);
-   const struct gl_vertex_program *vp = ctx->VertexProgram._Current;
-   const struct gl_fragment_program *fp = ctx->FragmentProgram._Current;
+   const struct gl_program *vp = ctx->VertexProgram._Current;
+   const struct gl_program *fp = ctx->FragmentProgram._Current;
    GLuint i;
 
    if (new_state & (_NEW_HINT | _NEW_PROGRAM)) {
@@ -148,7 +148,7 @@ _tnl_InvalidateState( struct gl_context *ctx, GLuint new_state )
     */
    tnl->render_inputs_bitset = BITFIELD64_BIT(_TNL_ATTRIB_POS);
 
-   if (!fp || (fp->Base.InputsRead & VARYING_BIT_COL0)) {
+   if (!fp || (fp->info.inputs_read & VARYING_BIT_COL0)) {
      tnl->render_inputs_bitset |= BITFIELD64_BIT(_TNL_ATTRIB_COLOR0);
    }
 
@@ -157,13 +157,14 @@ _tnl_InvalidateState( struct gl_context *ctx, GLuint new_state )
 
    for (i = 0; i < ctx->Const.MaxTextureCoordUnits; i++) {
      if (ctx->Texture._EnabledCoordUnits & (1 << i) ||
-	 (fp && fp->Base.InputsRead & VARYING_BIT_TEX(i))) {
+	 (fp && fp->info.inputs_read & VARYING_BIT_TEX(i)) ||
+         _mesa_ati_fragment_shader_enabled(ctx)) {
        tnl->render_inputs_bitset |= BITFIELD64_BIT(_TNL_ATTRIB_TEX(i));
      }
    }
 
    if (ctx->Fog.Enabled
-       || (fp != NULL && (fp->Base.InputsRead & VARYING_BIT_FOGC) != 0)) {
+       || (fp != NULL && (fp->info.inputs_read & VARYING_BIT_FOGC) != 0)) {
       /* Either fixed-function fog or a fragment program needs fog coord.
        */
       tnl->render_inputs_bitset |= BITFIELD64_BIT(_TNL_ATTRIB_FOG);
@@ -183,7 +184,8 @@ _tnl_InvalidateState( struct gl_context *ctx, GLuint new_state )
    if (vp) {
       GLuint i;
       for (i = 0; i < MAX_VARYING; i++) {
-	 if (vp->Base.OutputsWritten & BITFIELD64_BIT(VARYING_SLOT_VAR0 + i)) {
+	 if (vp->info.outputs_written &
+             BITFIELD64_BIT(VARYING_SLOT_VAR0 + i)) {
             tnl->render_inputs_bitset |= BITFIELD64_BIT(_TNL_ATTRIB_GENERIC(i));
          }
       }

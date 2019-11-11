@@ -10,15 +10,13 @@ $(OBJDIR)\fcobjshash.h: $(OBJDIR)\fcobjshash.gperf
 	gperf -m 100 $< > $@
 	python converttype.py $@
 
+DEFINES+=FC_TEMPLATEDIR=\"./conf.avail\"
 
 load_makefile NORELDBG=1 ..\fc-case\makefile
-load_makefile NORELDBG=1 ..\fc-glyphname\makefile
 load_makefile NORELDBG=1 ..\fc-lang\makefile
-load_makefile NORELDBG=1 ..\fc-blanks\makefile
 
 CSRCS = \
 	fcatomic.c \
-	fcblanks.c \
 	fccache.c \
 	fccfg.c \
 	fccharset.c \
@@ -29,6 +27,8 @@ CSRCS = \
 	fcformat.c \
 	fcfreetype.c \
 	fcfs.c \
+	fcptrlist.c \
+	fchash.c \
 	fcinit.c \
 	fclang.c \
 	fclist.c \
@@ -43,23 +43,18 @@ CSRCS = \
 	fcstr.c \
 	fcweight.c \
 	fcxml.c \
-	ftglue.c
+	ftglue.c \
+	gen_uuid.c \
+	copy.c \
+	parse.c \
+	pack.c \
+	unpack.c \
+	unparse.c
 
 LIBRARY = libfontconfig
 
-PUBLIC_FILES = \
-	..\fontconfig\fontconfig.h \
-	fcdeprecate.h \
-	..\fontconfig\fcprivate.h
+INCLUDES := .. uuid $(OBJDIR) $(INCLUDES) $(MHMAKECONF)\freetype\include\freetype $(MHMAKECONF)\freetype\include $(MHMAKECONF)\libxml2\include $(MHMAKECONF)\iconv\include \
+	..\fc-lang\$(OBJDIR)\..	..\fc-case\$(OBJDIR)\..
 
-PUBLIC_FT_FILES = \
-	..\fontconfig\fcfreetype.h
-
-INCLUDES := .. $(OBJDIR) $(INCLUDES) $(MHMAKECONF)\freetype\include\freetype $(MHMAKECONF)\freetype\include $(MHMAKECONF)\libxml2\include $(MHMAKECONF)\iconv\include
-
-fcalias.h fcaliastail.h: makealias.py $(PUBLIC_FILES)
-	python makealias.py . fcalias.h fcaliastail.h $(PUBLIC_FILES)
-
-fcftalias.h fcftaliastail.h: makealias.py $(PUBLIC_FT_FILES)
-	python makealias.py . fcftalias.h fcftaliastail.h $(PUBLIC_FT_FILES)
+load_makefile IS64=0 NORELDBG=1 makefile.srcs
 

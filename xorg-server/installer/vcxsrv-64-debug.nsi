@@ -16,15 +16,19 @@
  *  along with vcxsrv.  If not, see <http://www.gnu.org/licenses/>.
 */
 ;--------------------------------
+!define NAME "VcXsrv"
+!define VERSION "1.20.1.4"
 
 ; The name of the installer
-Name "VcXsrv"
+Name "${NAME}"
 
 ; The file to write
-OutFile "vcxsrv-64-debug.1.18.3.0.installer.exe"
+OutFile "vcxsrv-64-debug.${VERSION}.installer.exe"
 
 ; The default installation directory
-InstallDir $PROGRAMFILES64\VcXsrv
+InstallDir $programfiles64\VcXsrv
+
+SetCompressor /SOLID lzma
 
 ; Registry key to check for directory (so if you install again, it will
 ; overwrite the old one automatically)
@@ -32,11 +36,11 @@ InstallDirRegKey HKLM SOFTWARE\VcXsrv "Install_Dir_64"
 
 LoadLanguageFile "${NSISDIR}\Contrib\Language files\English.nlf"
 
-VIProductVersion "1.18.3.0"
-VIAddVersionKey /LANG=${LANG_ENGLISH} "ProductName" "VcXsrv"
+VIProductVersion "${VERSION}"
+VIAddVersionKey /LANG=${LANG_ENGLISH} "ProductName" "${NAME}"
 VIAddVersionKey /LANG=${LANG_ENGLISH} "FileDescription" "VcXsrv windows xserver"
-VIAddVersionKey /LANG=${LANG_ENGLISH} "FileVersion" "1.18.3.0"
-VIAddVersionKey /LANG=${LANG_ENGLISH} "ProductVersion" "1.18.3.0"
+VIAddVersionKey /LANG=${LANG_ENGLISH} "FileVersion" "${VERSION}"
+VIAddVersionKey /LANG=${LANG_ENGLISH} "ProductVersion" "${VERSION}"
 
 ; Request application privileges for Windows Vista
 RequestExecutionLevel admin
@@ -95,7 +99,7 @@ Section "VcXsrv debug exe and dlls"
   File "..\..\apps\xwininfo\obj64\debug\xwininfo.exe"
   File "..\hw\xwin\xlaunch\obj64\debug\xlaunch.exe"
   File "..\..\tools\plink\obj64\debug\plink.exe"
-  File "..\..\mesalib\windows\VC8\mesa\x64\Debug\swrast_dri.dll"
+  File "..\..\mesalib\src\obj64\debug\swrast_dri.dll"
   File "..\hw\xwin\swrastwgl_dri\obj64\debug\swrastwgl_dri.dll"
   File "..\..\dxtn\obj64\debug\dxtn.dll"
   File "..\..\zlib\obj64\debug\zlib1.dll"
@@ -104,6 +108,7 @@ Section "VcXsrv debug exe and dlls"
   File "..\..\libX11\obj64\debug\libX11.dll"
   File "..\..\libXext\src\obj64\debug\libXext.dll"
   File "..\..\libXmu\src\obj64\debug\libXmu.dll"
+  File "..\..\openssl\debug64\libcrypto-1_1-x64.dll"
   File "vcruntime140d.dll"
   File "msvcp140d.dll"
 

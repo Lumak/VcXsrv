@@ -21,11 +21,9 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-#pragma once
 #ifndef FORMATQUERY_H
 #define FORMATQUERY_H
 
-#include "compiler.h"
 #include "glheader.h"
 
 size_t

@@ -21,7 +21,6 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-#pragma once
 #ifndef IR_UNIFORM_H
 #define IR_UNIFORM_H
 
@@ -29,7 +28,8 @@
 /* stdbool.h is necessary because this file is included in both C and C++ code.
  */
 #include <stdbool.h>
-
+#include <stdint.h>
+#include "util/macros.h"
 #include "program/prog_parameter.h"  /* For union gl_constant_value. */
 
 /**
@@ -106,6 +106,11 @@ struct gl_uniform_storage {
    unsigned array_elements;
 
    struct gl_opaque_uniform_index opaque[MESA_SHADER_STAGES];
+
+   /**
+    * Mask of shader stages (1 << MESA_SHADER_xxx) where this uniform is used.
+    */
+   unsigned active_shader_mask;
 
    /**
     * Storage used by the driver for the uniform
@@ -202,6 +207,12 @@ struct gl_uniform_storage {
     * top-level shader storage block member. (GL_TOP_LEVEL_ARRAY_STRIDE).
     */
    unsigned top_level_array_stride;
+
+   /**
+    * Whether this uniform variable has the bindless_sampler or bindless_image
+    * layout qualifier as specified by ARB_bindless_texture.
+    */
+   bool is_bindless;
 };
 
 #ifdef __cplusplus

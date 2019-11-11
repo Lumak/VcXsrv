@@ -83,13 +83,15 @@ is_phi_src_scalarizable(nir_phi_src *src,
       nir_intrinsic_instr *src_intrin = nir_instr_as_intrinsic(src_instr);
 
       switch (src_intrin->intrinsic) {
-      case nir_intrinsic_load_var:
-         return src_intrin->variables[0]->var->data.mode == nir_var_shader_in ||
-                src_intrin->variables[0]->var->data.mode == nir_var_uniform;
+      case nir_intrinsic_load_deref: {
+         nir_deref_instr *deref = nir_src_as_deref(src_intrin->src[0]);
+         return deref->mode == nir_var_shader_in ||
+                deref->mode == nir_var_uniform;
+      }
 
-      case nir_intrinsic_interp_var_at_centroid:
-      case nir_intrinsic_interp_var_at_sample:
-      case nir_intrinsic_interp_var_at_offset:
+      case nir_intrinsic_interp_deref_at_centroid:
+      case nir_intrinsic_interp_deref_at_sample:
+      case nir_intrinsic_interp_deref_at_offset:
       case nir_intrinsic_load_uniform:
       case nir_intrinsic_load_ubo:
       case nir_intrinsic_load_ssbo:
@@ -166,6 +168,8 @@ static bool
 lower_phis_to_scalar_block(nir_block *block,
                            struct lower_phis_to_scalar_state *state)
 {
+   bool progress = false;
+
    /* Find the last phi node in the block */
    nir_phi_instr *last_phi = NULL;
    nir_foreach_instr(instr, block) {
@@ -248,6 +252,8 @@ lower_phis_to_scalar_block(nir_block *block,
       ralloc_steal(state->dead_ctx, phi);
       nir_instr_remove(&phi->instr);
 
+      progress = true;
+
       /* We're using the safe iterator and inserting all the newly
        * scalarized phi nodes before their non-scalarized version so that's
        * ok.  However, we are also inserting vec operations after all of
@@ -258,13 +264,14 @@ lower_phis_to_scalar_block(nir_block *block,
          break;
    }
 
-   return true;
+   return progress;
 }
 
-static void
+static bool
 lower_phis_to_scalar_impl(nir_function_impl *impl)
 {
    struct lower_phis_to_scalar_state state;
+   bool progress = false;
 
    state.mem_ctx = ralloc_parent(impl);
    state.dead_ctx = ralloc_context(NULL);
@@ -272,13 +279,14 @@ lower_phis_to_scalar_impl(nir_function_impl *impl)
                                              _mesa_key_pointer_equal);
 
    nir_foreach_block(block, impl) {
-      lower_phis_to_scalar_block(block, &state);
+      progress = lower_phis_to_scalar_block(block, &state) || progress;
    }
 
    nir_metadata_preserve(impl, nir_metadata_block_index |
                                nir_metadata_dominance);
 
    ralloc_free(state.dead_ctx);
+   return progress;
 }
 
 /** A pass that lowers vector phi nodes to scalar
@@ -288,11 +296,15 @@ lower_phis_to_scalar_impl(nir_function_impl *impl)
  * instance, if one of the sources is a non-scalarizable vector, then we
  * don't bother lowering because that would generate hard-to-coalesce movs.
  */
-void
+bool
 nir_lower_phis_to_scalar(nir_shader *shader)
 {
+   bool progress = false;
+
    nir_foreach_function(function, shader) {
       if (function->impl)
-         lower_phis_to_scalar_impl(function->impl);
+         progress = lower_phis_to_scalar_impl(function->impl) || progress;
    }
+
+   return progress;
 }

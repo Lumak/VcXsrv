@@ -4,7 +4,7 @@
 /*                                                                         */
 /*    Some convenience conversions (body).                                 */
 /*                                                                         */
-/*  Copyright 2006-2016 by                                                 */
+/*  Copyright 2006-2018 by                                                 */
 /*  David Turner, Robert Wilhelm, and Werner Lemberg.                      */
 /*                                                                         */
 /*  This file is part of the FreeType project, and may only be used,       */
@@ -17,8 +17,8 @@
 
 
 #include <ft2build.h>
-#include <internal/psaux.h>
-#include <internal/ftdebug.h>
+#include FT_INTERNAL_POSTSCRIPT_AUX_H
+#include FT_INTERNAL_DEBUG_H
 
 #include "psconv.h"
 #include "psauxerr.h"
@@ -111,6 +111,10 @@
       p++;
       if ( p == limit )
         goto Bad;
+
+      /* only a single sign is allowed */
+      if ( *p == '-' || *p == '+' )
+        return 0;
     }
 
     num_limit = 0x7FFFFFFFL / base;
@@ -215,6 +219,10 @@
       p++;
       if ( p == limit )
         goto Bad;
+
+      /* only a single sign is allowed */
+      if ( *p == '-' || *p == '+' )
+        return 0;
     }
 
     /* read the integer part */

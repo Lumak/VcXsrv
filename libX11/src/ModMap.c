@@ -34,7 +34,7 @@ XModifierKeymap *
 XGetModifierMapping(register Display *dpy)
 {
     xGetModifierMappingReply rep;
-    register xReq *req;
+    _X_UNUSED register xReq *req;
     unsigned long nbytes;
     XModifierKeymap *res;
 
@@ -42,7 +42,8 @@ XGetModifierMapping(register Display *dpy)
     GetEmptyReq(GetModifierMapping, req);
     (void) _XReply (dpy, (xReply *)&rep, 0, xFalse);
 
-    if (rep.length < (INT_MAX >> 2)) {
+    if (rep.length < (INT_MAX >> 2) &&
+	(rep.length >> 1) == rep.numKeyPerModifier) {
 	nbytes = (unsigned long)rep.length << 2;
 	res = Xmalloc(sizeof (XModifierKeymap));
 	if (res)
@@ -83,7 +84,7 @@ XSetModifierMapping(
     req->length += mapSize >> 2;
     req->numKeyPerModifier = modifier_map->max_keypermod;
 
-    Data(dpy, modifier_map->modifiermap, mapSize);
+    Data(dpy, (const char *)modifier_map->modifiermap, mapSize);
 
     (void) _XReply(dpy, (xReply *) & rep,
 	(SIZEOF(xSetModifierMappingReply) - SIZEOF(xReply)) >> 2, xTrue);

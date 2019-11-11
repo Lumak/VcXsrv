@@ -4,7 +4,7 @@
 /*                                                                         */
 /*    I/O stream support (body).                                           */
 /*                                                                         */
-/*  Copyright 2000-2016 by                                                 */
+/*  Copyright 2000-2018 by                                                 */
 /*  David Turner, Robert Wilhelm, and Werner Lemberg.                      */
 /*                                                                         */
 /*  This file is part of the FreeType project, and may only be used,       */
@@ -17,8 +17,8 @@
 
 
 #include <ft2build.h>
-#include <internal/ftstream.h>
-#include <internal/ftdebug.h>
+#include FT_INTERNAL_STREAM_H
+#include FT_INTERNAL_DEBUG_H
 
 
   /*************************************************************************/
@@ -778,7 +778,7 @@
 
       case ft_frame_short_be:
       case ft_frame_ushort_be:  /* read a 2-byte big-endian short */
-        value = FT_NEXT_USHORT( cursor) ;
+        value = FT_NEXT_USHORT( cursor );
         sign_shift = 16;
         break;
 

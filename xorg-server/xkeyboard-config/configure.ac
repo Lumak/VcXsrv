@@ -1,7 +1,6 @@
-AC_INIT(xkeyboard-config, 2.18)
+AC_INIT(xkeyboard-config, 2.25)
 AC_CONFIG_SRCDIR(rules/base.xml.in)
 AM_INIT_AUTOMAKE([foreign dist-bzip2])
-AM_MAINTAINER_MODE
 
 # Require X.Org macros 1.12 or later for XORG_WITH_XSLTPROC
 m4_ifndef([XORG_MACROS_VERSION],
@@ -72,7 +71,7 @@ GETTEXT_PACKAGE=xkeyboard-config
 AC_SUBST(GETTEXT_PACKAGE)
 AC_DEFINE_UNQUOTED(GETTEXT_PACKAGE, "$GETTEXT_PACKAGE", [Gettext package])
 
-ALL_LINGUAS="af az bg ca crh cs da de el en_GB eo es fi fr gl hr hu id it ja ka ko ky lt nb nl pl pt_BR ro ru rw sk sl sq sr sv tr uk vi zh_CN zh_TW"
+ALL_LINGUAS="af az bg ca crh cs da de el en_GB eo es fi fr fur gl hr hu id it ja ka ko ky lt nb nl pl pt_BR ro ru rw sk sl sq sr sv tr uk vi zh_CN zh_TW"
 
 AC_SUBST(xkb_base)
 AC_SUBST(xkb_rules_symlink)

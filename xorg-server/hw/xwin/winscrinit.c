@@ -64,17 +64,6 @@ static RootlessFrameProcsRec winMWExtWMProcs = {
 #endif
 
 /*
- * Prototypes
- */
-
-/*
- * Local functions
- */
-
-static Bool
- winSaveScreen(ScreenPtr pScreen, int on);
-
-/*
  * Determine what type of screen we are initializing
  * and call the appropriate procedure to intiailize
  * that type of screen.
@@ -221,10 +210,10 @@ winScreenInit(ScreenPtr pScreen, int argc, char **argv)
            Note the screen origin in a normalized coordinate space where (0,0) is at the top left
            of the native virtual desktop area
          */
-        pScreen->x =
-            pScreenInfo->dwInitialX - GetSystemMetrics(SM_XVIRTUALSCREEN);
-        pScreen->y =
-            pScreenInfo->dwInitialY - GetSystemMetrics(SM_YVIRTUALSCREEN);
+		pScreen->x =
+			pScreenInfo->dwInitialX;
+		pScreen->y =
+			pScreenInfo->dwInitialY;
 
         winDebug("Screen %d added at virtual desktop coordinate (%d,%d).\n",
                pScreen->myNum, pScreen->x, pScreen->y);
@@ -261,9 +250,7 @@ winFinishScreenInitFB(int i, ScreenPtr pScreen, int argc, char **argv)
     winScreenInfo *pScreenInfo = pScreenPriv->pScreenInfo;
     VisualPtr pVisual = NULL;
 
-#if defined(XWIN_CLIPBOARD) || defined(XWIN_MULTIWINDOW)
     int iReturn;
-#endif
 
     /* Create framebuffer */
     if (!(*pScreenPriv->pwinInitScreen) (pScreen)) {
@@ -325,9 +312,6 @@ winFinishScreenInitFB(int i, ScreenPtr pScreen, int argc, char **argv)
         pScreen->blackPixel = 0;
         pScreen->whitePixel = 1;
     }
-
-    /* Place our save screen function */
-    pScreen->SaveScreen = winSaveScreen;
 
     /* Finish fb initialization */
     if (!fbFinishScreenInit(pScreen,
@@ -446,7 +430,6 @@ winFinishScreenInitFB(int i, ScreenPtr pScreen, int argc, char **argv)
 #undef WRAP
     }
 
-#ifdef XWIN_MULTIWINDOW
     /* Handle multi window mode */
     else if (pScreenInfo->fMultiWindow) {
         /* Define the WRAP macro temporarily for local use */
@@ -489,13 +472,11 @@ winFinishScreenInitFB(int i, ScreenPtr pScreen, int argc, char **argv)
         /* Undefine the WRAP macro, as it is not needed elsewhere */
 #undef WRAP
     }
-#endif
 
     /* Wrap either fb's or shadow's CloseScreen with our CloseScreen */
     pScreenPriv->CloseScreen = pScreen->CloseScreen;
     pScreen->CloseScreen = pScreenPriv->pwinCloseScreen;
 
-#if defined(XWIN_CLIPBOARD) || defined(XWIN_MULTIWINDOW)
     /* Create a mutex for modules in separate threads to wait for */
     iReturn = pthread_mutex_init(&pScreenPriv->pmServerStarted, NULL);
     if (iReturn != 0) {
@@ -514,18 +495,17 @@ winFinishScreenInitFB(int i, ScreenPtr pScreen, int argc, char **argv)
 
     /* Set the ServerStarted flag to false */
     pScreenPriv->fServerStarted = FALSE;
-#endif
 
 #ifdef XWIN_MULTIWINDOWEXTWM
     pScreenPriv->fRestacking = FALSE;
 #endif
 
-#if defined(XWIN_MULTIWINDOW) || defined(XWIN_MULTIWINDOWEXTWM)
-    if (FALSE
-#ifdef XWIN_MULTIWINDOW
-        || pScreenInfo->fMultiWindow
-#endif
-        ) {
+    if (pScreenInfo->fMultiWindow) {
+        if ((pScreenInfo->dwBPP == 8) && (pScreenInfo->fCompositeWM)) {
+            ErrorF("-compositewm disabled due to 8bpp depth\n");
+            pScreenInfo->fCompositeWM = FALSE;
+        }
+
         winDebug("winFinishScreenInitFB - Calling winInitWM.\n");
 
         /* Initialize multi window mode */
@@ -534,12 +514,13 @@ winFinishScreenInitFB(int i, ScreenPtr pScreen, int argc, char **argv)
                        &pScreenPriv->ptXMsgProc,
                        &pScreenPriv->pmServerStarted,
                        pScreenInfo->dwScreen,
-                       (HWND) &pScreenPriv->hwndScreen)) {
+                       (HWND) &pScreenPriv->hwndScreen,
+                       pScreenInfo->fCompositeWM
+                       )) {
             ErrorF("winFinishScreenInitFB - winInitWM () failed.\n");
             return FALSE;
         }
     }
-#endif
 
     /* Tell the server that we are enabled */
     pScreenPriv->fEnabled = TRUE;
@@ -549,12 +530,5 @@ winFinishScreenInitFB(int i, ScreenPtr pScreen, int argc, char **argv)
 
     winDebug("winFinishScreenInitFB - returning\n");
 
-    return TRUE;
-}
-
-/* See Porting Layer Definition - p. 33 */
-static Bool
-winSaveScreen(ScreenPtr pScreen, int on)
-{
     return TRUE;
 }

@@ -86,14 +86,16 @@ static int XTestSwapFakeInput(ClientPtr /* client */ ,
 static int
 ProcXTestGetVersion(ClientPtr client)
 {
-    xXTestGetVersionReply rep;
+    xXTestGetVersionReply rep = {
+        .type = X_Reply,
+        .sequenceNumber = client->sequence,
+        .length = 0,
+        .majorVersion = XTestMajorVersion,
+        .minorVersion = XTestMinorVersion
+    };
 
     REQUEST_SIZE_MATCH(xXTestGetVersionReq);
-    rep.type = X_Reply;
-    rep.sequenceNumber = client->sequence;
-    rep.length = 0;
-    rep.majorVersion = XTestMajorVersion;
-    rep.minorVersion = XTestMinorVersion;
+
     if (client->swapped) {
         swaps(&rep.sequenceNumber);
         swaps(&rep.minorVersion);
@@ -132,11 +134,12 @@ ProcXTestCompareCursor(ClientPtr client)
             return rc;
         }
     }
-
-    rep.type = X_Reply;
-    rep.sequenceNumber = client->sequence;
-    rep.length = 0;
-    rep.same = (wCursor(pWin) == pCursor);
+    rep = (xXTestCompareCursorReply) {
+        .type = X_Reply,
+        .sequenceNumber = client->sequence,
+        .length = 0,
+        .same = (wCursor(pWin) == pCursor)
+    };
     if (client->swapped) {
         swaps(&rep.sequenceNumber);
     }
@@ -465,7 +468,7 @@ ProcXTestDispatch(ClientPtr client)
     }
 }
 
-static int
+static int _X_COLD
 SProcXTestGetVersion(ClientPtr client)
 {
     REQUEST(xXTestGetVersionReq);
@@ -476,7 +479,7 @@ SProcXTestGetVersion(ClientPtr client)
     return ProcXTestGetVersion(client);
 }
 
-static int
+static int _X_COLD
 SProcXTestCompareCursor(ClientPtr client)
 {
     REQUEST(xXTestCompareCursorReq);
@@ -488,7 +491,7 @@ SProcXTestCompareCursor(ClientPtr client)
     return ProcXTestCompareCursor(client);
 }
 
-static int
+static int _X_COLD
 XTestSwapFakeInput(ClientPtr client, xReq * req)
 {
     int nev;
@@ -511,7 +514,7 @@ XTestSwapFakeInput(ClientPtr client, xReq * req)
     return Success;
 }
 
-static int
+static int _X_COLD
 SProcXTestFakeInput(ClientPtr client)
 {
     int n;
@@ -525,7 +528,7 @@ SProcXTestFakeInput(ClientPtr client)
     return ProcXTestFakeInput(client);
 }
 
-static int
+static int _X_COLD
 SProcXTestGrabControl(ClientPtr client)
 {
     REQUEST(xXTestGrabControlReq);
@@ -535,7 +538,7 @@ SProcXTestGrabControl(ClientPtr client)
     return ProcXTestGrabControl(client);
 }
 
-static int
+static int _X_COLD
 SProcXTestDispatch(ClientPtr client)
 {
     REQUEST(xReq);

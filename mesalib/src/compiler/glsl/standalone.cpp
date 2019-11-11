@@ -33,10 +33,100 @@
 #include "glsl_parser_extras.h"
 #include "ir_optimization.h"
 #include "program.h"
-#include "program/hash_table.h"
 #include "loop_analysis.h"
 #include "standalone_scaffolding.h"
 #include "standalone.h"
+#include "string_to_uint_map.h"
+#include "util/set.h"
+#include "linker.h"
+#include "glsl_parser_extras.h"
+#include "ir_builder_print_visitor.h"
+#include "builtin_functions.h"
+#include "opt_add_neg_to_sub.h"
+#include "main/mtypes.h"
+
+class dead_variable_visitor : public ir_hierarchical_visitor {
+public:
+   dead_variable_visitor()
+   {
+      variables = _mesa_set_create(NULL,
+                                   _mesa_hash_pointer,
+                                   _mesa_key_pointer_equal);
+   }
+
+   virtual ~dead_variable_visitor()
+   {
+      _mesa_set_destroy(variables, NULL);
+   }
+
+   virtual ir_visitor_status visit(ir_variable *ir)
+   {
+      /* If the variable is auto or temp, add it to the set of variables that
+       * are candidates for removal.
+       */
+      if (ir->data.mode != ir_var_auto && ir->data.mode != ir_var_temporary)
+         return visit_continue;
+
+      _mesa_set_add(variables, ir);
+
+      return visit_continue;
+   }
+
+   virtual ir_visitor_status visit(ir_dereference_variable *ir)
+   {
+      struct set_entry *entry = _mesa_set_search(variables, ir->var);
+
+      /* If a variable is dereferenced at all, remove it from the set of
+       * variables that are candidates for removal.
+       */
+      if (entry != NULL)
+         _mesa_set_remove(variables, entry);
+
+      return visit_continue;
+   }
+
+   void remove_dead_variables()
+   {
+      set_foreach(variables, entry) {
+         ir_variable *ir = (ir_variable *) entry->key;
+
+         assert(ir->ir_type == ir_type_variable);
+         ir->remove();
+      }
+   }
+
+private:
+   set *variables;
+};
+
+static void
+init_gl_program(struct gl_program *prog, bool is_arb_asm)
+{
+   prog->RefCount = 1;
+   prog->Format = GL_PROGRAM_FORMAT_ASCII_ARB;
+   prog->is_arb_asm = is_arb_asm;
+}
+
+static struct gl_program *
+new_program(UNUSED struct gl_context *ctx, GLenum target,
+            UNUSED GLuint id, bool is_arb_asm)
+{
+   switch (target) {
+   case GL_VERTEX_PROGRAM_ARB: /* == GL_VERTEX_PROGRAM_NV */
+   case GL_GEOMETRY_PROGRAM_NV:
+   case GL_TESS_CONTROL_PROGRAM_NV:
+   case GL_TESS_EVALUATION_PROGRAM_NV:
+   case GL_FRAGMENT_PROGRAM_ARB:
+   case GL_COMPUTE_PROGRAM_NV: {
+      struct gl_program *prog = rzalloc(NULL, struct gl_program);
+      init_gl_program(prog, is_arb_asm);
+      return prog;
+   }
+   default:
+      printf("bad target in new_program\n");
+      return NULL;
+   }
+}
 
 static const struct standalone_options *options;
 
@@ -58,6 +148,10 @@ initialize_context(struct gl_context *ctx, gl_api api)
    ctx->Const.MaxComputeWorkGroupSize[2] = 64;
    ctx->Const.MaxComputeWorkGroupInvocations = 1024;
    ctx->Const.MaxComputeSharedMemorySize = 32768;
+   ctx->Const.MaxComputeVariableGroupSize[0] = 512;
+   ctx->Const.MaxComputeVariableGroupSize[1] = 512;
+   ctx->Const.MaxComputeVariableGroupSize[2] = 64;
+   ctx->Const.MaxComputeVariableGroupInvocations = 512;
    ctx->Const.Program[MESA_SHADER_COMPUTE].MaxTextureImageUnits = 16;
    ctx->Const.Program[MESA_SHADER_COMPUTE].MaxUniformComponents = 1024;
    ctx->Const.Program[MESA_SHADER_COMPUTE].MaxCombinedUniformComponents = 1024;
@@ -134,6 +228,9 @@ initialize_context(struct gl_context *ctx, gl_api api)
       ctx->Const.MaxLights = 8;
       ctx->Const.MaxTextureCoordUnits = 8;
       ctx->Const.MaxTextureUnits = 2;
+      ctx->Const.MaxUniformBufferBindings = 84;
+      ctx->Const.MaxVertexStreams = 4;
+      ctx->Const.MaxTransformFeedbackBuffers = 4;
 
       ctx->Const.Program[MESA_SHADER_VERTEX].MaxAttribs = 16;
       ctx->Const.Program[MESA_SHADER_VERTEX].MaxTextureImageUnits = 16;
@@ -153,6 +250,13 @@ initialize_context(struct gl_context *ctx, gl_api api)
       break;
    case 150:
    case 330:
+   case 400:
+   case 410:
+   case 420:
+   case 430:
+   case 440:
+   case 450:
+   case 460:
       ctx->Const.MaxClipPlanes = 8;
       ctx->Const.MaxDrawBuffers = 8;
       ctx->Const.MinProgramTexelOffset = -8;
@@ -160,6 +264,9 @@ initialize_context(struct gl_context *ctx, gl_api api)
       ctx->Const.MaxLights = 8;
       ctx->Const.MaxTextureCoordUnits = 8;
       ctx->Const.MaxTextureUnits = 2;
+      ctx->Const.MaxUniformBufferBindings = 84;
+      ctx->Const.MaxVertexStreams = 4;
+      ctx->Const.MaxTransformFeedbackBuffers = 4;
 
       ctx->Const.Program[MESA_SHADER_VERTEX].MaxAttribs = 16;
       ctx->Const.Program[MESA_SHADER_VERTEX].MaxTextureImageUnits = 16;
@@ -201,6 +308,9 @@ initialize_context(struct gl_context *ctx, gl_api api)
       ctx->Const.MaxLights = 0;
       ctx->Const.MaxTextureCoordUnits = 0;
       ctx->Const.MaxTextureUnits = 0;
+      ctx->Const.MaxUniformBufferBindings = 84;
+      ctx->Const.MaxVertexStreams = 4;
+      ctx->Const.MaxTransformFeedbackBuffers = 4;
 
       ctx->Const.Program[MESA_SHADER_VERTEX].MaxAttribs = 16;
       ctx->Const.Program[MESA_SHADER_VERTEX].MaxTextureImageUnits = 16;
@@ -226,7 +336,7 @@ initialize_context(struct gl_context *ctx, gl_api api)
    ctx->Const.MaxUserAssignableUniformLocations =
       4 * MESA_SHADER_STAGES * MAX_UNIFORMS;
 
-   ctx->Driver.NewShader = _mesa_new_linked_shader;
+   ctx->Driver.NewProgram = new_program;
 }
 
 /* Returned string will have 'ctx' as its ralloc owner. */
@@ -273,13 +383,14 @@ load_text_file(void *ctx, const char *file_name)
    return text;
 }
 
-void
+static void
 compile_shader(struct gl_context *ctx, struct gl_shader *shader)
 {
    struct _mesa_glsl_parse_state *state =
       new(shader) _mesa_glsl_parse_state(ctx, shader->Stage, shader);
 
-   _mesa_glsl_compile_shader(ctx, shader, options->dump_ast, options->dump_hir);
+   _mesa_glsl_compile_shader(ctx, shader, options->dump_ast,
+                             options->dump_hir, true);
 
    /* Print out the resulting IR */
    if (!state->error && options->dump_lir) {
@@ -287,19 +398,6 @@ compile_shader(struct gl_context *ctx, struct gl_shader *shader)
    }
 
    return;
-}
-
-void
-init_gl_program(struct gl_program *prog, GLenum target)
-{
-   mtx_init(&prog->Mutex, mtx_plain);
-
-   prog->RefCount = 1;
-   prog->Format = GL_PROGRAM_FORMAT_ASCII_ARB;
-
-   /* default mapping from samplers to texture units */
-   for (int i = 0; i < MAX_SAMPLERS; i++)
-      prog->SamplerUnits[i] = i;
 }
 
 extern "C" struct gl_shader_program *
@@ -324,6 +422,13 @@ standalone_compile_shader(const struct standalone_options *_options,
    case 140:
    case 150:
    case 330:
+   case 400:
+   case 410:
+   case 420:
+   case 430:
+   case 440:
+   case 450:
+   case 460:
       glsl_es = false;
       break;
    default:
@@ -331,13 +436,19 @@ standalone_compile_shader(const struct standalone_options *_options,
       return NULL;
    }
 
-   initialize_context(ctx, (glsl_es) ? API_OPENGLES2 : API_OPENGL_COMPAT);
+   if (glsl_es) {
+      initialize_context(ctx, API_OPENGLES2);
+   } else {
+      initialize_context(ctx, options->glsl_version > 130 ? API_OPENGL_CORE : API_OPENGL_COMPAT);
+   }
 
    struct gl_shader_program *whole_program;
 
    whole_program = rzalloc (NULL, struct gl_shader_program);
    assert(whole_program != NULL);
-   whole_program->InfoLog = ralloc_strdup(whole_program, "");
+   whole_program->data = rzalloc(whole_program, struct gl_shader_program_data);
+   assert(whole_program->data != NULL);
+   whole_program->data->InfoLog = ralloc_strdup(whole_program->data, "");
 
    /* Created just to avoid segmentation faults */
    whole_program->AttributeBindings = new string_to_uint_map;
@@ -400,17 +511,56 @@ standalone_compile_shader(const struct standalone_options *_options,
       }
    }
 
-   if ((status == EXIT_SUCCESS) && options->do_link)  {
-      _mesa_clear_shader_program_data(whole_program);
+   if (status == EXIT_SUCCESS) {
+      _mesa_clear_shader_program_data(ctx, whole_program);
 
-      link_shaders(ctx, whole_program);
-      status = (whole_program->LinkStatus) ? EXIT_SUCCESS : EXIT_FAILURE;
+      if (options->do_link)  {
+         link_shaders(ctx, whole_program);
+      } else {
+         const gl_shader_stage stage = whole_program->Shaders[0]->Stage;
 
-      if (strlen(whole_program->InfoLog) > 0) {
+         whole_program->data->LinkStatus = LINKING_SUCCESS;
+         whole_program->_LinkedShaders[stage] =
+            link_intrastage_shaders(whole_program /* mem_ctx */,
+                                    ctx,
+                                    whole_program,
+                                    whole_program->Shaders,
+                                    1,
+                                    true);
+
+         /* Par-linking can fail, for example, if there are undefined external
+          * references.
+          */
+         if (whole_program->_LinkedShaders[stage] != NULL) {
+            assert(whole_program->data->LinkStatus);
+
+            struct gl_shader_compiler_options *const compiler_options =
+               &ctx->Const.ShaderCompilerOptions[stage];
+
+            exec_list *const ir =
+               whole_program->_LinkedShaders[stage]->ir;
+
+            bool progress;
+            do {
+               progress = do_function_inlining(ir);
+
+               progress = do_common_optimization(ir,
+                                                 false,
+                                                 false,
+                                                 compiler_options,
+                                                 true)
+                  && progress;
+            } while(progress);
+         }
+      }
+
+      status = (whole_program->data->LinkStatus) ? EXIT_SUCCESS : EXIT_FAILURE;
+
+      if (strlen(whole_program->data->InfoLog) > 0) {
          printf("\n");
          if (!options->just_log)
             printf("Info log for linking:\n");
-         printf("%s", whole_program->InfoLog);
+         printf("%s", whole_program->data->InfoLog);
          if (!options->just_log)
             printf("\n");
       }
@@ -421,14 +571,34 @@ standalone_compile_shader(const struct standalone_options *_options,
          if (!shader)
             continue;
 
-         shader->Program = rzalloc(shader, gl_program);
-         init_gl_program(shader->Program, shader->Stage);
+         add_neg_to_sub_visitor v;
+         visit_list_elements(&v, shader->ir);
+
+         dead_variable_visitor dv;
+         visit_list_elements(&dv, shader->ir);
+         dv.remove_dead_variables();
+      }
+
+      if (options->dump_builder) {
+         for (unsigned i = 0; i < MESA_SHADER_STAGES; i++) {
+            struct gl_linked_shader *shader = whole_program->_LinkedShaders[i];
+
+            if (!shader)
+               continue;
+
+            _mesa_print_builder_for_ir(stdout, shader->ir);
+         }
       }
    }
 
    return whole_program;
 
 fail:
+   for (unsigned i = 0; i < MESA_SHADER_STAGES; i++) {
+      if (whole_program->_LinkedShaders[i])
+         ralloc_free(whole_program->_LinkedShaders[i]->Program);
+   }
+
    ralloc_free(whole_program);
    return NULL;
 }
@@ -436,8 +606,10 @@ fail:
 extern "C" void
 standalone_compiler_cleanup(struct gl_shader_program *whole_program)
 {
-   for (unsigned i = 0; i < MESA_SHADER_STAGES; i++)
-      ralloc_free(whole_program->_LinkedShaders[i]);
+   for (unsigned i = 0; i < MESA_SHADER_STAGES; i++) {
+      if (whole_program->_LinkedShaders[i])
+         ralloc_free(whole_program->_LinkedShaders[i]->Program);
+   }
 
    delete whole_program->AttributeBindings;
    delete whole_program->FragDataBindings;

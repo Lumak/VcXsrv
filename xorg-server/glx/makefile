@@ -3,7 +3,7 @@ LIBRARY=libglx
 DEFINES += GLAPIENTRY=__stdcall _GLAPI_NO_EXPORTS
 
 
-glapi_sources =					\
+indirect_sources =					\
 	indirect_dispatch.c			\
 	indirect_dispatch_swap.c		\
 	indirect_reqsize.c			\
@@ -15,7 +15,6 @@ glapi_sources =					\
 
 CSRCS = \
 	$(indirect_sources) \
-	$(glapi_sources) \
 	clientinfo.c \
 	createcontext.c \
 	extension_string.c \
@@ -41,5 +40,14 @@ CSRCS = \
         swap_interval.c \
         xfont.c
 
-INCLUDES := $(MHMAKECONF)\mesalib\include . $(INCLUDES)
+libglxvnd_la_SOURCES = \
+	vndcmds.c \
+	vndext.c \
+	vndservermapping.c \
+	vndservervendor.c
 
+CSRCS += $(libglxvnd_la_SOURCES)
+
+INCLUDES := $(MHMAKECONF)\mesalib\include . ../composite $(INCLUDES) $(MHMAKECONF)\gl\include
+
+load_makefile IS64=0 NORELDBG=1 $(MHMAKECONF)\mesalib\src\mapi\glapi\gen\makefile.srcs

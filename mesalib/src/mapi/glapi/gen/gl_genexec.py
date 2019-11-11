@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 
 # Copyright (C) 2012 Intel Corporation
 #
@@ -24,6 +23,8 @@
 # This script generates the file api_exec.c, which contains
 # _mesa_initialize_exec_table().  It is responsible for populating all
 # entries in the "exec" dispatch table that aren't dynamic.
+
+from __future__ import print_function
 
 import argparse
 import collections
@@ -63,12 +64,14 @@ header = """/**
 #include "main/colortab.h"
 #include "main/compute.h"
 #include "main/condrender.h"
+#include "main/conservativeraster.h"
 #include "main/context.h"
 #include "main/convolve.h"
 #include "main/copyimage.h"
 #include "main/depth.h"
 #include "main/debug_output.h"
 #include "main/dlist.h"
+#include "main/draw.h"
 #include "main/drawpix.h"
 #include "main/drawtex.h"
 #include "main/rastpos.h"
@@ -76,7 +79,9 @@ header = """/**
 #include "main/errors.h"
 #include "main/es1_conversion.h"
 #include "main/eval.h"
+#include "main/externalobjects.h"
 #include "main/get.h"
+#include "main/glspirv.h"
 #include "main/feedback.h"
 #include "main/fog.h"
 #include "main/fbobject.h"
@@ -92,6 +97,7 @@ header = """/**
 #include "main/objectlabel.h"
 #include "main/objectpurge.h"
 #include "main/performance_monitor.h"
+#include "main/performance_query.h"
 #include "main/pipelineobj.h"
 #include "main/pixel.h"
 #include "main/pixelstore.h"
@@ -113,6 +119,7 @@ header = """/**
 #include "main/texstate.h"
 #include "main/texstorage.h"
 #include "main/barrier.h"
+#include "main/texturebindless.h"
 #include "main/textureview.h"
 #include "main/transformfeedback.h"
 #include "main/mtypes.h"
@@ -125,7 +132,6 @@ header = """/**
 #include "main/formatquery.h"
 #include "main/dispatch.h"
 #include "main/vdpau.h"
-#include "vbo/vbo.h"
 
 
 /**
@@ -146,7 +152,7 @@ _mesa_initialize_exec_table(struct gl_context *ctx)
 
    assert(ctx->Version > 0);
 
-   vbo_initialize_exec_dispatch(ctx, exec);
+   _mesa_initialize_exec_dispatch(ctx, exec);
 """
 
 
@@ -166,10 +172,10 @@ class PrintCode(gl_XML.gl_print_base):
             'Intel Corporation')
 
     def printRealHeader(self):
-        print header
+        print(header)
 
     def printRealFooter(self):
-        print footer
+        print(footer)
 
     def printBody(self, api):
         # Collect SET_* calls by the condition under which they should
@@ -232,15 +238,23 @@ class PrintCode(gl_XML.gl_print_base):
                 # This function is not implemented, or is dispatched
                 # dynamically.
                 continue
-            settings_by_condition[condition].append(
-                'SET_{0}(exec, {1}{0});'.format(f.name, prefix, f.name))
+            if f.has_no_error_variant:
+                no_error_condition = '_mesa_is_no_error_enabled(ctx) && ({0})'.format(condition)
+                error_condition = '!_mesa_is_no_error_enabled(ctx) && ({0})'.format(condition)
+                settings_by_condition[no_error_condition].append(
+                    'SET_{0}(exec, {1}{0}_no_error);'.format(f.name, prefix, f.name))
+                settings_by_condition[error_condition].append(
+                    'SET_{0}(exec, {1}{0});'.format(f.name, prefix, f.name))
+            else:
+                settings_by_condition[condition].append(
+                    'SET_{0}(exec, {1}{0});'.format(f.name, prefix, f.name))
         # Print out an if statement for each unique condition, with
         # the SET_* calls nested inside it.
         for condition in sorted(settings_by_condition.keys()):
-            print '   if ({0}) {{'.format(condition)
+            print('   if ({0}) {{'.format(condition))
             for setting in sorted(settings_by_condition[condition]):
-                print '      {0}'.format(setting)
-            print '   }'
+                print('      {0}'.format(setting))
+            print('   }')
 
 
 def _parser():

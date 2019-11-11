@@ -29,7 +29,41 @@
 
 #include "driver.h"
 
-#ifdef GLAMOR
+/*
+ * Flush the DRM event queue when full; makes space for new events.
+ *
+ * Returns a negative value on error, 0 if there was nothing to process,
+ * or 1 if we handled any events.
+ */
+int
+ms_flush_drm_events(ScreenPtr screen)
+{
+    ScrnInfoPtr scrn = xf86ScreenToScrn(screen);
+    modesettingPtr ms = modesettingPTR(scrn);
+
+    struct pollfd p = { .fd = ms->fd, .events = POLLIN };
+    int r;
+
+    do {
+            r = xserver_poll(&p, 1, 0);
+    } while (r == -1 && (errno == EINTR || errno == EAGAIN));
+
+    /* If there was an error, r will be < 0.  Return that.  If there was
+     * nothing to process, r == 0.  Return that.
+     */
+    if (r <= 0)
+        return r;
+
+    /* Try to handle the event.  If there was an error, return it. */
+    r = drmHandleEvent(ms->fd, &ms->event_context);
+    if (r < 0)
+        return r;
+
+    /* Otherwise return 1 to indicate that we handled an event. */
+    return 1;
+}
+
+#ifdef GLAMOR_HAS_GBM
 
 /*
  * Event data for an in progress flip.
@@ -125,38 +159,12 @@ ms_pageflip_abort(void *data)
     ms_pageflip_free(flip);
 }
 
-/*
- * Flush the DRM event queue when full; makes space for new events.
- *
- * Returns a negative value on error, 0 if there was nothing to process,
- * or 1 if we handled any events.
- */
-int
-ms_flush_drm_events(ScreenPtr screen)
+static Bool
+do_queue_flip_on_crtc(modesettingPtr ms, xf86CrtcPtr crtc,
+                      uint32_t flags, uint32_t seq)
 {
-    ScrnInfoPtr scrn = xf86ScreenToScrn(screen);
-    modesettingPtr ms = modesettingPTR(scrn);
-
-    struct pollfd p = { .fd = ms->fd, .events = POLLIN };
-    int r;
-
-    do {
-            r = xserver_poll(&p, 1, 0);
-    } while (r == -1 && (errno == EINTR || errno == EAGAIN));
-
-    /* If there was an error, r will be < 0.  Return that.  If there was
-     * nothing to process, r == 0.  Return that.
-     */
-    if (r <= 0)
-        return r;
-
-    /* Try to handle the event.  If there was an error, return it. */
-    r = drmHandleEvent(ms->fd, &ms->event_context);
-    if (r < 0)
-        return r;
-
-    /* Otherwise return 1 to indicate that we handled an event. */
-    return 1;
+    return drmmode_crtc_flip(crtc, ms->drmmode.fb_id, flags,
+                             (void *) (uintptr_t) seq);
 }
 
 static Bool
@@ -193,8 +201,7 @@ queue_flip_on_crtc(ScreenPtr screen, xf86CrtcPtr crtc,
     /* take a reference on flipdata for use in flip */
     flipdata->flip_count++;
 
-    while (drmModePageFlip(ms->fd, drmmode_crtc->mode_crtc->crtc_id,
-                           ms->drmmode.fb_id, flags, (void *) (uintptr_t) seq)) {
+    while (do_queue_flip_on_crtc(ms, crtc, flags, seq)) {
         err = errno;
         /* We may have failed because the event queue was full.  Flush it
          * and retry.  If there was nothing to flush, then we failed for
@@ -240,6 +247,7 @@ ms_do_pageflip(ScreenPtr screen,
 
     new_front_bo.gbm = glamor_gbm_bo_from_pixmap(screen, new_front);
     new_front_bo.dumb = NULL;
+
     if (!new_front_bo.gbm) {
         xf86DrvMsg(scrn->scrnIndex, X_ERROR,
                    "Failed to get GBM bo for flip to new front.\n");
@@ -270,14 +278,12 @@ ms_do_pageflip(ScreenPtr screen,
 
     /* Create a new handle for the back buffer */
     flipdata->old_fb_id = ms->drmmode.fb_id;
-    if (drmModeAddFB(ms->fd, scrn->virtualX, scrn->virtualY,
-                     scrn->depth, scrn->bitsPerPixel,
-                     drmmode_bo_get_pitch(&new_front_bo),
-                     drmmode_bo_get_handle(&new_front_bo), &ms->drmmode.fb_id)) {
-        goto error_out;
-    }
 
-    drmmode_bo_destroy(&ms->drmmode, &new_front_bo);
+    new_front_bo.width = new_front->drawable.width;
+    new_front_bo.height = new_front->drawable.height;
+    if (drmmode_bo_import(&ms->drmmode, &new_front_bo,
+                          &ms->drmmode.fb_id))
+        goto error_out;
 
     flags = DRM_MODE_PAGE_FLIP_EVENT;
     if (async)
@@ -305,6 +311,8 @@ ms_do_pageflip(ScreenPtr screen,
         }
     }
 
+    drmmode_bo_destroy(&ms->drmmode, &new_front_bo);
+
     /*
      * Do we have more than our local reference,
      * if so and no errors, then drop our local
@@ -330,6 +338,7 @@ error_undo:
 error_out:
     xf86DrvMsg(scrn->scrnIndex, X_WARNING, "Page flip failed: %s\n",
                strerror(errno));
+    drmmode_bo_destroy(&ms->drmmode, &new_front_bo);
     /* if only the local reference - free the structure,
      * else drop the local reference and return */
     if (flipdata->flip_count == 1)

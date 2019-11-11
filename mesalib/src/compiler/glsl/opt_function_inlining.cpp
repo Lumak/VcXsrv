@@ -32,7 +32,7 @@
 #include "ir_function_inlining.h"
 #include "ir_expression_flattening.h"
 #include "compiler/glsl_types.h"
-#include "program/hash_table.h"
+#include "util/hash_table.h"
 
 static void
 do_variable_replacement(exec_list *instructions,
@@ -62,6 +62,11 @@ public:
    bool progress;
 };
 
+class ir_save_lvalue_visitor : public ir_hierarchical_visitor {
+public:
+   virtual ir_visitor_status visit_enter(ir_dereference_array *);
+};
+
 } /* unnamed namespace */
 
 bool
@@ -84,7 +89,7 @@ replace_return_with_assignment(ir_instruction *ir, void *data)
    if (ret) {
       if (ret->value) {
 	 ir_rvalue *lhs = orig_deref->clone(ctx, NULL);
-	 ret->replace_with(new(ctx) ir_assignment(lhs, ret->value, NULL));
+         ret->replace_with(new(ctx) ir_assignment(lhs, ret->value));
       } else {
 	 /* un-valued return has to be the last return, or we shouldn't
 	  * have reached here. (see can_inline()).
@@ -93,6 +98,49 @@ replace_return_with_assignment(ir_instruction *ir, void *data)
 	 ret->remove();
       }
    }
+}
+
+/* Save the given lvalue before the given instruction.
+ *
+ * This is done by adding temporary variables into which the current value
+ * of any array indices are saved, and then modifying the dereference chain
+ * in-place to point to those temporary variables.
+ *
+ * The hierarchical visitor is only used to traverse the left-hand-side chain
+ * of derefs.
+ */
+ir_visitor_status
+ir_save_lvalue_visitor::visit_enter(ir_dereference_array *deref)
+{
+   if (deref->array_index->ir_type != ir_type_constant) {
+      void *ctx = ralloc_parent(deref);
+      ir_variable *index;
+      ir_assignment *assignment;
+
+      index = new(ctx) ir_variable(deref->array_index->type, "saved_idx", ir_var_temporary);
+      base_ir->insert_before(index);
+
+      assignment = new(ctx) ir_assignment(new(ctx) ir_dereference_variable(index),
+                                          deref->array_index);
+      base_ir->insert_before(assignment);
+
+      deref->array_index = new(ctx) ir_dereference_variable(index);
+   }
+
+   deref->array->accept(this);
+   return visit_stop;
+}
+
+static bool
+should_replace_variable(ir_variable *sig_param, ir_rvalue *param) {
+   /* For opaque types, we want the inlined variable references
+    * referencing the passed in variable, since that will have
+    * the location information, which an assignment of an opaque
+    * variable wouldn't.
+    */
+   return sig_param->type->contains_opaque() &&
+          param->is_dereference() &&
+          sig_param->data.mode == ir_var_function_in;
 }
 
 void
@@ -104,7 +152,7 @@ ir_call::generate_inline(ir_instruction *next_ir)
    int i;
    struct hash_table *ht;
 
-   ht = hash_table_ctor(0, hash_table_pointer_hash, hash_table_pointer_compare);
+   ht = _mesa_hash_table_create(NULL, _mesa_hash_pointer, _mesa_key_pointer_equal);
 
    num_parameters = this->callee->parameters.length();
    parameters = new ir_variable *[num_parameters];
@@ -119,16 +167,12 @@ ir_call::generate_inline(ir_instruction *next_ir)
       ir_rvalue *param = (ir_rvalue *) actual_node;
 
       /* Generate a new variable for the parameter. */
-      if (sig_param->type->contains_opaque()) {
-	 /* For opaque types, we want the inlined variable references
-	  * referencing the passed in variable, since that will have
-	  * the location information, which an assignment of an opaque
-	  * variable wouldn't.  Fix it up below.
-	  */
+      if (should_replace_variable(sig_param, param)) {
+         /* Actual replacement happens below */
 	 parameters[i] = NULL;
       } else {
 	 parameters[i] = sig_param->clone(ctx, ht);
-	 parameters[i]->data.mode = ir_var_auto;
+	 parameters[i]->data.mode = ir_var_temporary;
 
 	 /* Remove the read-only decoration because we're going to write
 	  * directly to this variable.  If the cloned variable is left
@@ -139,15 +183,50 @@ ir_call::generate_inline(ir_instruction *next_ir)
 	 next_ir->insert_before(parameters[i]);
       }
 
-      /* Move the actual param into our param variable if it's an 'in' type. */
-      if (parameters[i] && (sig_param->data.mode == ir_var_function_in ||
-			    sig_param->data.mode == ir_var_const_in ||
-			    sig_param->data.mode == ir_var_function_inout)) {
-	 ir_assignment *assign;
+      /* Section 6.1.1 (Function Calling Conventions) of the OpenGL Shading
+       * Language 4.5 spec says:
+       *
+       *    "All arguments are evaluated at call time, exactly once, in order,
+       *     from left to right. [...] Evaluation of an out parameter results
+       *     in an l-value that is used to copy out a value when the function
+       *     returns."
+       *
+       * I.e., we have to take temporary copies of any relevant array indices
+       * before the function body is executed.
+       *
+       * This ensures that
+       * (a) if an array index expressions refers to a variable that is
+       *     modified by the execution of the function body, we use the
+       *     original value as intended, and
+       * (b) if an array index expression has side effects, those side effects
+       *     are only executed once and at the right time.
+       */
+      if (parameters[i]) {
+         if (sig_param->data.mode == ir_var_function_in ||
+             sig_param->data.mode == ir_var_const_in) {
+            ir_assignment *assign;
 
-	 assign = new(ctx) ir_assignment(new(ctx) ir_dereference_variable(parameters[i]),
-					 param, NULL);
-	 next_ir->insert_before(assign);
+            assign = new(ctx) ir_assignment(new(ctx) ir_dereference_variable(parameters[i]),
+                                            param);
+            next_ir->insert_before(assign);
+         } else {
+            assert(sig_param->data.mode == ir_var_function_out ||
+                   sig_param->data.mode == ir_var_function_inout);
+            assert(param->is_lvalue());
+
+            ir_save_lvalue_visitor v;
+            v.base_ir = next_ir;
+
+            param->accept(&v);
+
+            if (sig_param->data.mode == ir_var_function_inout) {
+               ir_assignment *assign;
+
+               assign = new(ctx) ir_assignment(new(ctx) ir_dereference_variable(parameters[i]),
+                                               param->clone(ctx, NULL)->as_rvalue());
+               next_ir->insert_before(assign);
+            }
+         }
       }
 
       ++i;
@@ -171,10 +250,9 @@ ir_call::generate_inline(ir_instruction *next_ir)
       ir_rvalue *const param = (ir_rvalue *) actual_node;
       ir_variable *sig_param = (ir_variable *) formal_node;
 
-      if (sig_param->type->contains_opaque()) {
+      if (should_replace_variable(sig_param, param)) {
 	 ir_dereference *deref = param->as_dereference();
 
-	 assert(deref);
 	 do_variable_replacement(&new_instructions, sig_param, deref);
       }
    }
@@ -196,9 +274,8 @@ ir_call::generate_inline(ir_instruction *next_ir)
 			    sig_param->data.mode == ir_var_function_inout)) {
 	 ir_assignment *assign;
 
-	 assign = new(ctx) ir_assignment(param->clone(ctx, NULL)->as_rvalue(),
-					 new(ctx) ir_dereference_variable(parameters[i]),
-					 NULL);
+         assign = new(ctx) ir_assignment(param,
+                                         new(ctx) ir_dereference_variable(parameters[i]));
 	 next_ir->insert_before(assign);
       }
 
@@ -207,7 +284,7 @@ ir_call::generate_inline(ir_instruction *next_ir)
 
    delete [] parameters;
 
-   hash_table_dtor(ht);
+   _mesa_hash_table_destroy(ht, NULL);
 }
 
 
@@ -281,6 +358,9 @@ public:
    virtual ir_visitor_status visit_leave(ir_dereference_array *);
    virtual ir_visitor_status visit_leave(ir_dereference_record *);
    virtual ir_visitor_status visit_leave(ir_texture *);
+   virtual ir_visitor_status visit_leave(ir_assignment *);
+   virtual ir_visitor_status visit_leave(ir_expression *);
+   virtual ir_visitor_status visit_leave(ir_return *);
 
    void replace_deref(ir_dereference **deref);
    void replace_rvalue(ir_rvalue **rvalue);
@@ -317,6 +397,32 @@ ir_visitor_status
 ir_variable_replacement_visitor::visit_leave(ir_texture *ir)
 {
    replace_deref(&ir->sampler);
+
+   return visit_continue;
+}
+
+ir_visitor_status
+ir_variable_replacement_visitor::visit_leave(ir_assignment *ir)
+{
+   replace_deref(&ir->lhs);
+   replace_rvalue(&ir->rhs);
+
+   return visit_continue;
+}
+
+ir_visitor_status
+ir_variable_replacement_visitor::visit_leave(ir_expression *ir)
+{
+   for (uint8_t i = 0; i < ir->num_operands; i++)
+      replace_rvalue(&ir->operands[i]);
+
+   return visit_continue;
+}
+
+ir_visitor_status
+ir_variable_replacement_visitor::visit_leave(ir_return *ir)
+{
+   replace_rvalue(&ir->value);
 
    return visit_continue;
 }

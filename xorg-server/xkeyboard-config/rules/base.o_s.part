@@ -16,6 +16,7 @@
   grp:win_switch	=	+group(win_switch)
   grp:lwin_switch	=	+group(lwin_switch)
   grp:rwin_switch	=	+group(rwin_switch)
+  grp:menu_switch	=	+group(menu_switch)
   grp:toggle		=	+group(toggle)
   grp:shifts_toggle	=	+group(shifts_toggle)
   grp:ctrls_toggle	=	+group(ctrls_toggle)
@@ -170,5 +171,5 @@
   lv5:ralt_switch_lock_cancel     =       +level5(ralt_switch_lock_cancel)
   lv5:lwin_switch_lock_cancel     =       +level5(lwin_switch_lock_cancel)
   lv5:rwin_switch_lock_cancel     =       +level5(rwin_switch_lock_cancel)
-
+  parens:swap_brackets   =   +parens(swap_brackets)
 

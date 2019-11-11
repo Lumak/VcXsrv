@@ -1,4 +1,4 @@
-#! /usr/bin/env python
+from __future__ import print_function
 
 template = """\
 /* Copyright (C) 2015 Broadcom
@@ -34,7 +34,7 @@ def src_list(num_srcs):
    return ', '.join('src' + str(i) if i < num_srcs else 'NULL' for i in range(4))
 %>
 
-% for name, opcode in sorted(opcodes.iteritems()):
+% for name, opcode in sorted(opcodes.items()):
 static inline nir_ssa_def *
 nir_${name}(nir_builder *build, ${src_decl_list(opcode.num_inputs)})
 {
@@ -42,9 +42,48 @@ nir_${name}(nir_builder *build, ${src_decl_list(opcode.num_inputs)})
 }
 % endfor
 
+/* Generic builder for system values. */
+static inline nir_ssa_def *
+nir_load_system_value(nir_builder *build, nir_intrinsic_op op, int index)
+{
+   nir_intrinsic_instr *load = nir_intrinsic_instr_create(build->shader, op);
+   load->num_components = nir_intrinsic_infos[op].dest_components;
+   load->const_index[0] = index;
+   nir_ssa_dest_init(&load->instr, &load->dest,
+                     nir_intrinsic_infos[op].dest_components, 32, NULL);
+   nir_builder_instr_insert(build, &load->instr);
+   return &load->dest.ssa;
+}
+
+<%
+def sysval_decl_list(opcode):
+   res = ''
+   if opcode.indices:
+      res += ', unsigned ' + opcode.indices[0].lower()
+   return res
+
+def sysval_arg_list(opcode):
+   args = []
+   if opcode.indices:
+      args.append(opcode.indices[0].lower())
+   else:
+      args.append('0')
+   return ', '.join(args)
+%>
+
+% for name, opcode in filter(lambda v: v[1].sysval, sorted(INTR_OPCODES.items())):
+static inline nir_ssa_def *
+nir_${name}(nir_builder *build${sysval_decl_list(opcode)})
+{
+   return nir_load_system_value(build, nir_intrinsic_${name},
+                                ${sysval_arg_list(opcode)});
+}
+% endfor
+
 #endif /* _NIR_BUILDER_OPCODES_ */"""
 
 from nir_opcodes import opcodes
+from nir_intrinsics import INTR_OPCODES
 from mako.template import Template
 
-print Template(template).render(opcodes=opcodes)
+print(Template(template).render(opcodes=opcodes, INTR_OPCODES=INTR_OPCODES))

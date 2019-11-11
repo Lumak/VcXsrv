@@ -101,7 +101,14 @@ void glcpp_set_column (int  column_no , yyscan_t yyscanner);
 #define RETURN_STRING_TOKEN(token)					\
 	do {								\
 		if (! parser->skipping) {				\
-			yylval->str = ralloc_strdup (yyextra, yytext);	\
+			/* We're not doing linear_strdup here, to avoid \
+			 * an implicit call on strlen() for the length  \
+			 * of the string, as this is already found by   \
+			 * flex and stored in yyleng */                 \
+			void *mem_ctx = yyextra->linalloc;		\
+			yylval->str = linear_alloc_child(mem_ctx,	\
+							 yyleng + 1);	\
+			memcpy(yylval->str, yytext, yyleng + 1);        \
 			RETURN_TOKEN_NEVER_SKIP (token);		\
 		}							\
 	} while(0)
@@ -175,7 +182,7 @@ glcpp_lex_update_state_per_token (glcpp_parser_t *parser, int token)
 
 SPACE		[[:space:]]
 NONSPACE	[^[:space:]]
-HSPACE		[ \t]
+HSPACE		[ \t\v\f]
 HASH		#
 NEWLINE		(\r\n|\n\r|\r|\n)
 IDENTIFIER	[_a-zA-Z][_a-zA-Z0-9]*
@@ -282,6 +289,7 @@ HEXADECIMAL_INTEGER	0[xX][0-9a-fA-F]+[uU]?
          * token. */
 	if (parser->first_non_space_token_this_line) {
 		BEGIN HASH;
+		yyextra->in_define = false;
 	}
 
 	RETURN_TOKEN_NEVER_SKIP (HASH_TOKEN);
@@ -329,43 +337,55 @@ HEXADECIMAL_INTEGER	0[xX][0-9a-fA-F]+[uU]?
 	/* For the pre-processor directives, we return these tokens
 	 * even when we are otherwise skipping. */
 <HASH>ifdef {
-	BEGIN INITIAL;
-	yyextra->lexing_directive = 1;
-	yyextra->space_tokens = 0;
-	RETURN_TOKEN_NEVER_SKIP (IFDEF);
+	if (!yyextra->in_define) {
+		BEGIN INITIAL;
+		yyextra->lexing_directive = 1;
+		yyextra->space_tokens = 0;
+		RETURN_TOKEN_NEVER_SKIP (IFDEF);
+	}
 }
 
 <HASH>ifndef {
-	BEGIN INITIAL;
-	yyextra->lexing_directive = 1;
-	yyextra->space_tokens = 0;
-	RETURN_TOKEN_NEVER_SKIP (IFNDEF);
+	if (!yyextra->in_define) {
+		BEGIN INITIAL;
+		yyextra->lexing_directive = 1;
+		yyextra->space_tokens = 0;
+		RETURN_TOKEN_NEVER_SKIP (IFNDEF);
+	}
 }
 
 <HASH>if/[^_a-zA-Z0-9] {
-	BEGIN INITIAL;
-	yyextra->lexing_directive = 1;
-	yyextra->space_tokens = 0;
-	RETURN_TOKEN_NEVER_SKIP (IF);
+	if (!yyextra->in_define) {
+		BEGIN INITIAL;
+		yyextra->lexing_directive = 1;
+		yyextra->space_tokens = 0;
+		RETURN_TOKEN_NEVER_SKIP (IF);
+	}
 }
 
 <HASH>elif/[^_a-zA-Z0-9] {
-	BEGIN INITIAL;
-	yyextra->lexing_directive = 1;
-	yyextra->space_tokens = 0;
-	RETURN_TOKEN_NEVER_SKIP (ELIF);
+	if (!yyextra->in_define) {
+		BEGIN INITIAL;
+		yyextra->lexing_directive = 1;
+		yyextra->space_tokens = 0;
+		RETURN_TOKEN_NEVER_SKIP (ELIF);
+	}
 }
 
 <HASH>else {
-	BEGIN INITIAL;
-	yyextra->space_tokens = 0;
-	RETURN_TOKEN_NEVER_SKIP (ELSE);
+	if (!yyextra->in_define) {
+		BEGIN INITIAL;
+		yyextra->space_tokens = 0;
+		RETURN_TOKEN_NEVER_SKIP (ELSE);
+	}
 }
 
 <HASH>endif {
-	BEGIN INITIAL;
-	yyextra->space_tokens = 0;
-	RETURN_TOKEN_NEVER_SKIP (ENDIF);
+	if (!yyextra->in_define) {
+		BEGIN INITIAL;
+		yyextra->space_tokens = 0;
+		RETURN_TOKEN_NEVER_SKIP (ENDIF);
+	}
 }
 
 <HASH>error[^\r\n]* {
@@ -392,7 +412,8 @@ HEXADECIMAL_INTEGER	0[xX][0-9a-fA-F]+[uU]?
 	 *	  and not whitespace). This will generate an error.
 	 */
 <HASH>define{HSPACE}* {
-	if (! parser->skipping) {
+	yyextra->in_define = true;
+	if (!parser->skipping) {
 		BEGIN DEFINE;
 		yyextra->space_tokens = 0;
 		RETURN_TOKEN (DEFINE_TOKEN);
@@ -413,8 +434,10 @@ HEXADECIMAL_INTEGER	0[xX][0-9a-fA-F]+[uU]?
 
 	/* This will catch any non-directive garbage after a HASH */
 <HASH>{NONSPACE} {
-	BEGIN INITIAL;
-	RETURN_TOKEN (GARBAGE);
+	if (!parser->skipping) {
+		BEGIN INITIAL;
+		RETURN_TOKEN (GARBAGE);
+	}
 }
 
 	/* An identifier immediately followed by '(' */

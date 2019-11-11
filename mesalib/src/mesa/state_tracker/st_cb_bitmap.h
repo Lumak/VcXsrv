@@ -30,12 +30,11 @@
 #define ST_CB_BITMAP_H
 
 
-#include "main/compiler.h"
 #include <stdbool.h>
 
 struct dd_function_table;
 struct st_context;
-struct gl_fragment_program;
+struct gl_program;
 struct st_fragment_program;
 
 extern void

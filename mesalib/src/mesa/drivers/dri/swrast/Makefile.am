@@ -30,11 +30,13 @@ AM_CFLAGS = \
 	-I$(top_srcdir)/src/mesa/ \
 	-I$(top_srcdir)/src/gallium/include \
 	-I$(top_srcdir)/src/gallium/auxiliary \
+	-I$(top_builddir)/src/util \
 	-I$(top_srcdir)/src/mesa/drivers/dri/common \
-	-I$(top_builddir)/src/mesa/drivers/dri/common \
 	$(LIBDRM_CFLAGS) \
 	$(DEFINES) \
 	$(VISIBILITY_CFLAGS)
 
 noinst_LTLIBRARIES = libswrast_dri.la
 libswrast_dri_la_SOURCES = $(SWRAST_C_FILES)
+
+EXTRA_DIST = meson.build

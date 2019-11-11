@@ -25,7 +25,7 @@
 
 #define PRESENT_NAME			"Present"
 #define PRESENT_MAJOR			1
-#define PRESENT_MINOR			0
+#define PRESENT_MINOR			2
 
 #define PresentNumberErrors		0
 #define PresentNumberEvents		0
@@ -44,10 +44,12 @@
 #define PresentOptionAsync              (1 << 0)
 #define PresentOptionCopy               (1 << 1)
 #define PresentOptionUST                (1 << 2)
+#define PresentOptionSuboptimal         (1 << 3)
 
 #define PresentAllOptions       (PresentOptionAsync | \
                                  PresentOptionCopy | \
-                                 PresentOptionUST)
+                                 PresentOptionUST | \
+                                 PresentOptionSuboptimal)
 
 /* Present capabilities */
 
@@ -64,18 +66,28 @@
 #define PresentConfigureNotify	0
 #define PresentCompleteNotify	1
 #define PresentIdleNotify       2
+#if PRESENT_FUTURE_VERSION
 #define PresentRedirectNotify	3
+#endif
 
 /* Event Masks */
 #define PresentConfigureNotifyMask      1
 #define PresentCompleteNotifyMask       2
 #define PresentIdleNotifyMask           4
+#if PRESENT_FUTURE_VERSION
 #define PresentRedirectNotifyMask       8
+#endif
+
+#if PRESENT_FUTURE_VERSION
+#define PRESENT_REDIRECT_NOTIFY_MASK    PresentRedirectNotifyMask
+#else
+#define PRESENT_REDIRECT_NOTIFY_MASK    0
+#endif
 
 #define PresentAllEvents   (PresentConfigureNotifyMask |        \
                             PresentCompleteNotifyMask |         \
                             PresentIdleNotifyMask |             \
-                            PresentRedirectNotifyMask)
+                            PRESENT_REDIRECT_NOTIFY_MASK)
 
 /* Complete Kinds */
 
@@ -84,8 +96,9 @@
 
 /* Complete Modes */
 
-#define PresentCompleteModeCopy         0
-#define PresentCompleteModeFlip         1
-#define PresentCompleteModeSkip         2
+#define PresentCompleteModeCopy           0
+#define PresentCompleteModeFlip           1
+#define PresentCompleteModeSkip           2
+#define PresentCompleteModeSuboptimalCopy 3
 
 #endif

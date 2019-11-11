@@ -63,8 +63,6 @@ typedef struct {
     Bool ShareVTs;
     Bool dontZap;
     Bool dontZoom;
-    Bool notrapSignals;         /* don't exit cleanly - die at fault */
-    Bool caughtSignal;
 
     /* graphics part */
     ScreenPtr currentScreen;
@@ -81,13 +79,7 @@ typedef struct {
                                  * changed */
     Bool miscModInDevAllowNonLocal;
     Bool useSIGIO;              /* Use SIGIO for handling DRI1 swaps */
-    Pix24Flags pixmap24;
-    MessageType pix24From;
     Bool pmFlag;
-    Bool disableRandR;
-    MessageType randRFrom;
-    Bool aiglx;
-    MessageType aiglxFrom;
     MessageType iglxFrom;
     XF86_GlxVisuals glxVisuals;
     MessageType glxVisualsFrom;
@@ -104,16 +96,8 @@ typedef struct {
     MessageType dri2From;
 
     Bool autoAddGPU;
+    const char *debug;
 } xf86InfoRec, *xf86InfoPtr;
-
-#ifdef DPMSExtension
-/* Private info for DPMS */
-typedef struct {
-    CloseScreenProcPtr CloseScreen;
-    Bool Enabled;
-    int Flags;
-} DPMSRec, *DPMSPtr;
-#endif
 
 /* ISC's cc can't handle ~ of UL constants, so explicitly type cast them. */
 #define XLED1   ((unsigned long) 0x00000001)
